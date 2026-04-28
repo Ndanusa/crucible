@@ -1,0 +1,60 @@
+[package]
+name = "crucible-backend"
+version = "0.1.0"
+edition = "2021"
+description = "Backend API server for the Crucible smart contract testing platform"
+license = "MIT"
+authors = ["Crucible Contributors"]
+
+[[bin]]
+name = "crucible-backend"
+path = "src/main.rs"
+
+[dependencies]
+# Web framework
+axum = { version = "0.7", features = ["macros"] }
+tower = { version = "0.4", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "compression-gzip", "request-id"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Database
+sqlx = { version = "0.7", features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "uuid",
+    "chrono",
+    "json",
+    "migrate",
+] }
+
+# Redis
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Utilities
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dotenvy = "0.15"
+thiserror = "1"
+
+[dev-dependencies]
+# Testing
+reqwest = { version = "0.12", features = ["json"] }
+tokio-test = "0.4"
+testcontainers = "0.16"
+wiremock = "0.6"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
