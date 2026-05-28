@@ -437,6 +437,36 @@ The backend runs several background workers for system health and data consisten
 - **Observability**: OpenTelemetry + Tracing
 - **API Documentation**: Utoipa (Swagger UI)
 
+## Workers Module
+
+The backend includes a dedicated workers module for background processing and system monitoring:
+
+### 🌟 Cache Warming System
+Pre-loads frequently accessed data into Redis cache to improve performance.
+- Automatically warms dashboard metrics and popular build data
+- Configurable warm intervals and TTL settings
+- Integrated with PostgreSQL database queries
+
+### 🚀 Response Caching Middleware
+HTTP response caching middleware that stores API responses in Redis.
+- Automatic cache key generation based on request method, URI, and query parameters
+- Configurable TTL for cached responses
+- Integration with Axum middleware stack
+
+### 📊 Job Progress Tracking
+Monitors and reports progress for long-running background jobs.
+- Real-time progress tracking with percentage calculation
+- Redis-based storage for job state
+- Support for completion steps and total steps tracking
+
+### 🩺 Worker Health Monitoring
+Tracks and reports health status of background workers.
+- Heartbeat monitoring with configurable thresholds
+- Automatic health status calculation
+- Redis-based health state storage
+
+All workers are designed to be production-ready with comprehensive error handling, tracing integration, and proper resource management.
+
 ## API Endpoints
 
 | Method | Path | Description |

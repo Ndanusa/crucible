@@ -6,6 +6,7 @@
 pub mod api_profile_test;
 pub mod api_status_test;
 pub mod services_test;
+pub mod workers_test;
 
 use axum::{routing::{get, post}, Router};
 use backend::{
