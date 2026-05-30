@@ -2,29 +2,36 @@
 name = "backend"
 version = "0.1.0"
 edition = "2021"
+description = "Backend API server for the Crucible smart contract testing platform"
+license = "MIT"
+authors = ["Crucible Contributors"]
+
+[[bin]]
+name = "crucible-backend"
+path = "src/main.rs"
+
+[[bin]]
+name = "backup"
+path = "src/bin/backup.rs"
+
+[features]
+testutils = ["mockall"]
 
 [dependencies]
 url = { version = "2", features = ["serde"] }
 # Web framework
 axum = { version = "0.7", features = ["macros"] }
-tower = { version = "0.4", features = ["full"] }
+tower = { version = "0.5", features = ["full", "util"] }
 tower-http = { version = "0.5", features = ["cors", "trace", "compression-gzip", "request-id"] }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 
-# Database
-sqlx = { version = "0.7", features = [
-    "runtime-tokio-rustls",
-    "postgres",
-    "uuid",
-    "chrono",
-    "json",
-    "migrate",
-] }
+# Database (Keep 0.8 from feature branch)
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "migrate", "macros"] }
 
-# Redis
-redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+# Redis (Keep 0.27 from feature branch)
+redis = { version = "0.27", features = ["tokio-comp", "json", "connection-manager"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -35,29 +42,23 @@ sha2 = "0.10"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
+# OpenTelemetry (Upgrade to 0.31+ from main branch)
+opentelemetry = { version = "0.31", features = ["trace"] }
+opentelemetry_sdk = { version = "0.31", features = ["trace", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.31", default-features = false, features = ["trace", "http-proto", "reqwest-client"] }
+tracing-opentelemetry = { version = "0.32", default-features = false }
+opentelemetry-semantic-conventions = "0.16"
+
 # Utilities
-uuid = { version = "1", features = ["v4", "serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
-thiserror = "1"
+thiserror = "1.0"
+anyhow = "1.0"
+config = "0.14.0"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
-# Move mockall to [dependencies] with optional = true, and remove it from [dev-dependencies].
-mockall = { version = "0.13", optional = true }
-
-[dev-dependencies]
-# Testing
-reqwest = { version = "0.12", features = ["json"] }
-tokio-test = "0.4"
-testcontainers = "0.16"
-wiremock = "0.6"
-
-tower = { version = "0.5", features = ["util"] }
-hyper = { version = "1.0", features = ["full"] }
-mime = "0.3"
-tokio = { version = "1", features = ["full", "test-util"] }
-arc-swap = "1.7"
-async-trait = "0.1"
-dotenvy = "0.15"
+# External Integrations
 utoipa = { version = "5.0", features = ["axum_extras", "chrono", "uuid"] }
 utoipa-swagger-ui = { version = "8.0", features = ["axum"] }
 apalis = { version = "0.6" }
@@ -66,16 +67,29 @@ rust_decimal = { version = "1.35", features = ["serde"] }
 stellar-xdr = { version = "21.0", features = ["std"] }
 base64 = "0.22"
 validator = { version = "0.19", features = ["derive"] }
-tower-http = { version = "0.5", features = ["cors", "trace"] }
 tower_governor = "0.4"
-opentelemetry = { version = "0.31", features = ["trace"] }
-opentelemetry_sdk = { version = "0.31", features = ["trace", "rt-tokio"] }
-opentelemetry-otlp = { version = "0.31", default-features = false, features = ["trace", "http-proto", "reqwest-client"] }
-tracing-opentelemetry = { version = "0.32", default-features = false }
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
-# OpenTelemetry and tracing instrumentation
-opentelemetry-semantic-conventions = "0.16"
+mockall = { version = "0.13", optional = true }
 tonic = "0.12"
+
+# Scheduler
+tokio-util = "0.7"
+cron = "0.12"
+async-trait = "0.1"
+
+[dev-dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+tokio-test = "0.4"
+testcontainers = "0.16"
+wiremock = "0.6"
+hyper = { version = "1.0", features = ["full"] }
+mime = "0.3"
+arc-swap = "1.7"
+async-trait = "0.1"
+rust_decimal_macros = "1.35"
+criterion = { version = "0.5", features = ["async_tokio"] }
+temp-env = "0.3.6"
+toml = "0.8.12"
+http-body-util = "0.1"
 
 [profile.release]
 opt-level = 3
