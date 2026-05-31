@@ -19,10 +19,17 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 24px 48px;
+  padding: 20px 48px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  background: rgba(15, 23, 42, 0.8);
-  backdrop-filter: blur(10px);
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(12px);
+  z-index: 100;
+}
+
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 
 .app-header h1 {
@@ -41,6 +48,39 @@
   font-size: 0.75rem;
   font-weight: 600;
   border: 1px solid rgba(94, 234, 212, 0.22);
+}
+
+.header-tabs {
+  display: flex;
+  gap: 8px;
+  background: rgba(4, 8, 15, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 4px;
+  border-radius: 10px;
+}
+
+.tab-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #94a3b8;
+  padding: 8px 18px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tab-btn:hover {
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.tab-btn.active {
+  background: rgba(139, 92, 246, 0.12);
+  color: #c084fc;
+  border-color: rgba(139, 92, 246, 0.35);
+  box-shadow: 0 0 15px rgba(139, 92, 246, 0.15);
 }
 
 .app-main {
