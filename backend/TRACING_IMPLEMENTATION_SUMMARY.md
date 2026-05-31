@@ -1,4 +1,4 @@
-# OpenTelemetry Tracing Implementation Summary - Issue #251
+# OpenTelemetry Tracing Implementation Summary - Issue #365
 
 **Implementation Date:** 2026-04-29  
 **Status:** ✅ COMPLETE  
@@ -23,7 +23,7 @@ Successfully implemented production-grade OpenTelemetry tracing across the entir
 **Status:** ✅ Already implemented (enhanced)
 
 The `TracingService` provides:
-- OTLP/gRPC exporter with configurable endpoint
+- OTLP/HTTP exporter with configurable endpoint
 - Environment-based sampling strategies (100% dev, 10% staging, 1% prod)
 - Semantic convention-compliant span factories
 - Resource detection (service name, version, environment)
@@ -220,8 +220,8 @@ Based on benchmarks and sampling strategies:
 
 | Variable | Default | Description |
 |---|---|---|
-| `OTLP_ENDPOINT` | `http://localhost:4317` | OTLP gRPC endpoint |
-| `ENV` | `dev` | Environment (dev, staging, production) |
+| `APP_OBSERVABILITY__TRACING_ENDPOINT` | `http://localhost:4318/v1/traces` | OTLP HTTP traces endpoint |
+| `APP_ENV` | `development` | Environment (development, staging, production) |
 | `RUST_LOG` | `info,crucible=debug` | Log level filter |
 
 #### Sampling Strategies
@@ -266,8 +266,8 @@ Created `backend/jaeger-sampling.json` with:
 docker-compose -f docker-compose-jaeger.yml up -d
 
 # Run backend with tracing
-export OTLP_ENDPOINT=http://localhost:4317
-export ENV=dev
+export APP_OBSERVABILITY__TRACING_ENDPOINT=http://localhost:4318/v1/traces
+export APP_ENV=development
 cargo run -p backend
 
 # View traces
@@ -416,24 +416,24 @@ Created `backend/src/services/TRACING_RECON.md` with:
 #### Development
 
 - [x] Start Jaeger: `docker-compose -f docker-compose-jaeger.yml up -d`
-- [x] Set `OTLP_ENDPOINT=http://localhost:4317`
-- [x] Set `ENV=dev`
+- [x] Set `APP_OBSERVABILITY__TRACING_ENDPOINT=http://localhost:4318/v1/traces`
+- [x] Set `APP_ENV=development`
 - [x] Run backend: `cargo run -p backend`
 - [x] View traces: `http://localhost:16686`
 
 #### Staging
 
 - [ ] Deploy Jaeger Collector with persistent storage
-- [ ] Set `OTLP_ENDPOINT=http://jaeger-collector:4317`
-- [ ] Set `ENV=staging` (10% sampling)
+- [ ] Set `APP_OBSERVABILITY__TRACING_ENDPOINT=http://jaeger-collector:4318/v1/traces`
+- [ ] Set `APP_ENV=staging` (10% sampling)
 - [ ] Monitor span drop rates
 - [ ] Validate trace quality
 
 #### Production
 
 - [ ] Deploy Jaeger with Elasticsearch backend
-- [ ] Set `OTLP_ENDPOINT=http://jaeger-collector:4317`
-- [ ] Set `ENV=production` (1% sampling)
+- [ ] Set `APP_OBSERVABILITY__TRACING_ENDPOINT=http://jaeger-collector:4318/v1/traces`
+- [ ] Set `APP_ENV=production` (1% sampling)
 - [ ] Set up alerts for high error rates
 - [ ] Monitor collector metrics
 - [ ] Validate performance impact

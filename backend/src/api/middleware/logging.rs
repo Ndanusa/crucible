@@ -1,13 +1,8 @@
 use crate::api::handlers::profiling::AppState;
-use axum::{
-    body::Body,
-    extract::State,
-    http::{Request, Response},
-    middleware::Next,
-    response::IntoResponse,
-};
+use crate::services::tracing::TracingService;
+use axum::{body::Body, extract::State, http::Request, middleware::Next, response::IntoResponse};
 use std::{sync::Arc, time::Instant};
-use tracing::{info_span, Instrument};
+use tracing::Instrument;
 
 /// Middleware to log HTTP requests and responses.
 ///
@@ -28,13 +23,8 @@ pub async fn logging_middleware(
     let uri = request.uri().clone();
     let version = request.version();
 
-    // Create a tracing span for this request
-    let span = info_span!(
-        "http_request",
-        %method,
-        %uri,
-        ?version,
-    );
+    let path = uri.path().to_string();
+    let span = TracingService::http_request_span(method.as_str(), &path, None);
 
     async move {
         // Log the incoming request
@@ -44,11 +34,16 @@ pub async fn logging_middleware(
 
         let latency = start_time.elapsed();
         let status = response.status();
+        span.record("http.status_code", status.as_u16());
+        if status.is_server_error() {
+            TracingService::record_error(&span, status.as_str(), "http_server_error");
+        }
 
         // Log the response
         tracing::info!(
             latency_ms = latency.as_millis(),
             status = status.as_u16(),
+            ?version,
             "Finished processing request"
         );
 

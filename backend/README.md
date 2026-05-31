@@ -283,7 +283,7 @@ High-performance endpoints for monitoring application health and system metrics.
 - `/api/v1/profiling/health`: System health status.
 - `/api/status`: Unified health, metrics, and active recovery tasks.
 
-### 🔭 OpenTelemetry Tracing (Issue #251)
+### 🔭 OpenTelemetry Tracing (Issue #365)
 Production-grade distributed tracing with OTLP exporter and Jaeger integration.
 - **Full instrumentation**: HTTP handlers, database queries, Redis operations, background jobs
 - **Semantic conventions**: W3C trace context, OpenTelemetry semantic conventions
@@ -472,8 +472,8 @@ All workers are designed to be production-ready with comprehensive error handlin
 
 2. **Run the backend** with tracing enabled:
    ```bash
-   export OTLP_ENDPOINT=http://localhost:4317
-   export ENV=dev
+   export APP_OBSERVABILITY__TRACING_ENDPOINT=http://localhost:4318/v1/traces
+   export APP_ENV=development
    cargo run -p backend
    ```
 
@@ -569,8 +569,8 @@ otel.kind = "internal"
 
 | Variable | Default | Description |
 |---|---|---|
-| `OTLP_ENDPOINT` | `http://localhost:4317` | OTLP gRPC endpoint |
-| `ENV` | `dev` | Environment (dev, staging, production) |
+| `APP_OBSERVABILITY__TRACING_ENDPOINT` | `http://localhost:4318/v1/traces` | OTLP HTTP traces endpoint |
+| `APP_ENV` | `development` | Environment (development, staging, production) |
 | `RUST_LOG` | `info,crucible=debug` | Log level filter |
 
 #### Sampling Strategies
@@ -664,7 +664,7 @@ Crucible uses a typed contract system for all API endpoints to ensure consistenc
 Production-grade distributed tracing with OTLP exporter and Jaeger integration.
 
 1. **Start Jaeger**: `docker-compose -f docker-compose-jaeger.yml up -d`
-2. **Run Backend**: `export OTLP_ENDPOINT=http://localhost:4317; cargo run -p backend`
+2. **Run Backend**: `export APP_OBSERVABILITY__TRACING_ENDPOINT=http://localhost:4318/v1/traces; cargo run -p backend`
 3. **View Traces**: Open `http://localhost:16686`
 
 Spans from every `#[tracing::instrument]`-annotated function are exported with **< 1% latency overhead**.
@@ -888,6 +888,7 @@ If `APP_ENV` is omitted, the application safely defaults to `development` and em
 | `APP_REDIS__URL` | String | None | Yes | Redis connection string. **(SENSITIVE)** |
 | `APP_REDIS__JOB_QUEUE_URL` | String | Falls back to URL | No | Separate Redis instance for the job queue. **(SENSITIVE)** |
 | `APP_OBSERVABILITY__LOG_LEVEL` | String | (from TOML) | No | Logging verbosity (e.g., `info`, `warn`, `debug`). |
+| `APP_OBSERVABILITY__TRACING_ENDPOINT` | String | `http://localhost:4318/v1/traces` | No | OTLP HTTP traces endpoint for Jaeger or an OpenTelemetry Collector. |
 
 ### How to Add a New Configuration Field
 

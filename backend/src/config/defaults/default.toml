@@ -17,4 +17,5 @@ max_retries = 3
 
 [observability]
 log_level = "info"
+tracing_endpoint = "http://localhost:4318/v1/traces"
 enable_metrics = false

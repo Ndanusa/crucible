@@ -43,10 +43,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let env = Environment::from_env();
     let config = AppConfig::load(env).expect("Failed to load configuration");
 
-    // Initialize observability using the new config system
-    config.observability.init_tracing(env);
-
-    // Initialize OpenTelemetry tracing FIRST - before any other services
+    // Initialize OpenTelemetry tracing before other services so startup work is captured.
     let tracing_config = TracingConfig::new(
         "crucible-backend".to_string(),
         env!("CARGO_PKG_VERSION").to_string(),
@@ -57,10 +54,14 @@ async fn main() -> Result<(), anyhow::Error> {
             .observability
             .tracing_endpoint
             .clone()
-            .unwrap_or_else(|| "http://localhost:4317".to_string()),
+            .unwrap_or_else(|| "http://localhost:4318/v1/traces".to_string()),
     );
 
-    TracingService::init(tracing_config)?;
+    let _tracing_guard = TracingService::init_with_filter(
+        tracing_config,
+        Some(&config.observability.log_level),
+        config.observability.json_logs(env),
+    )?;
 
     let span = info_span!("app.startup");
     let _enter = span.enter();
@@ -114,6 +115,8 @@ async fn main() -> Result<(), anyhow::Error> {
         metrics_exporter: metrics_exporter.clone(),
         error_manager: error_manager.clone(),
         config_manager: config_manager.clone(),
+        log_aggregator: log_aggregator.clone(),
+        redis: redis_client.clone(),
     });
 
     // Create dashboard state
@@ -230,19 +233,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 Err(_) => tracing::warn!("Timeout waiting for in-flight requests to complete"),
             }
 
-            // Flush tracing and logging
-            tracing::info!("Flushing tracing and logging subscribers");
-            // In practice, we'd use a tracing subscriber guard to flush
-            // For now, we note that tracing is flushed when the subscriber is dropped
-            // which happens naturally at the end of the program
-
-            // Close database connection pool
-            tracing::info!("Closing database connection pool");
-            drop(state.db); // This closes the pool
-
-            // Close Redis connection
-            tracing::info!("Closing Redis connection");
-            drop(state.redis); // This closes the connection manager
+            tracing::info!("Flushing tracing provider and releasing service clients");
 
             tracing::info!("Graceful shutdown completed successfully");
 
