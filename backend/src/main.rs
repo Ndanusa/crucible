@@ -126,7 +126,8 @@ async fn main() -> Result<(), anyhow::Error> {
         metrics_exporter,
         error_manager,
         alert_manager,
-        redis: redis_client,
+        db: db_pool.clone(),
+        redis: redis_client.clone(),
     });
 
     // OpenAPI docs
@@ -186,6 +187,14 @@ async fn main() -> Result<(), anyhow::Error> {
                 )
                 .with_state(dashboard_state),
         )
+        .nest(
+            "/api/v1/contracts",
+            Router::new()
+                .route("/compile", post(backend::api::handlers::contracts::compile_contract))
+                .route("/analyze-dependencies", post(backend::api::handlers::contracts::analyze_dependencies))
+                .with_state(state.clone()),
+        )
+        .route("/api/v1/networks", get(backend::api::handlers::contracts::get_networks))
         .nest(
             "/api/v1/errors",
             errors::error_analytics_routes(db_pool.clone(), redis_conn_dashboard.clone()),

@@ -1,6 +1,5 @@
 use axum::{
     body::Body,
-    extract::State,
     http::{Request, StatusCode},
     routing::get,
     Router,
@@ -8,7 +7,12 @@ use axum::{
 use backend::api::handlers::dashboard::{
     get_contract_stats, get_dashboard_metrics, DashboardState,
 };
-use redis::aio::ConnectionManager;
+use backend::services::{
+    error_recovery::ErrorManager,
+    log_alerts::AlertManager,
+    sys_metrics::MetricsExporter,
+};
+use redis::Client as RedisClient;
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -56,15 +60,11 @@ async fn setup_test_db() -> sqlx::PgPool {
     pool
 }
 
-async fn setup_test_redis() -> ConnectionManager {
+async fn setup_test_redis() -> RedisClient {
     let redis_url =
         std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
 
-    let client = redis::Client::open(redis_url).expect("Failed to create Redis client");
-
-    ConnectionManager::new(client)
-        .await
-        .expect("Failed to connect to Redis")
+    RedisClient::open(redis_url).expect("Failed to create Redis client")
 }
 
 async fn cleanup_test_data(pool: &sqlx::PgPool) {
@@ -85,6 +85,9 @@ async fn test_get_dashboard_metrics_empty_database() {
     cleanup_test_data(&pool).await;
 
     let state = Arc::new(DashboardState {
+        metrics_exporter: Arc::new(MetricsExporter::new()),
+        error_manager: Arc::new(ErrorManager::new()),
+        alert_manager: Arc::new(AlertManager::new()),
         db: pool.clone(),
         redis: redis.clone(),
     });
@@ -139,6 +142,9 @@ async fn test_get_dashboard_metrics_with_data() {
     .unwrap();
 
     let state = Arc::new(DashboardState {
+        metrics_exporter: Arc::new(MetricsExporter::new()),
+        error_manager: Arc::new(ErrorManager::new()),
+        alert_manager: Arc::new(AlertManager::new()),
         db: pool.clone(),
         redis: redis.clone(),
     });
@@ -178,6 +184,9 @@ async fn test_get_contract_stats_not_found() {
     cleanup_test_data(&pool).await;
 
     let state = Arc::new(DashboardState {
+        metrics_exporter: Arc::new(MetricsExporter::new()),
+        error_manager: Arc::new(ErrorManager::new()),
+        alert_manager: Arc::new(AlertManager::new()),
         db: pool.clone(),
         redis: redis.clone(),
     });
@@ -223,6 +232,9 @@ async fn test_get_contract_stats_success() {
     .unwrap();
 
     let state = Arc::new(DashboardState {
+        metrics_exporter: Arc::new(MetricsExporter::new()),
+        error_manager: Arc::new(ErrorManager::new()),
+        alert_manager: Arc::new(AlertManager::new()),
         db: pool.clone(),
         redis: redis.clone(),
     });
@@ -262,7 +274,11 @@ async fn test_redis_caching() {
     cleanup_test_data(&pool).await;
 
     // Clear cache
-    let mut conn = redis.clone();
+    let mut conn = redis
+        .clone()
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
     let _: Result<(), _> = redis::cmd("DEL")
         .arg("dashboard:metrics")
         .query_async(&mut conn)
@@ -274,6 +290,9 @@ async fn test_redis_caching() {
         .unwrap();
 
     let state = Arc::new(DashboardState {
+        metrics_exporter: Arc::new(MetricsExporter::new()),
+        error_manager: Arc::new(ErrorManager::new()),
+        alert_manager: Arc::new(AlertManager::new()),
         db: pool.clone(),
         redis: redis.clone(),
     });

@@ -4,7 +4,6 @@
 // Uses Axum for HTTP, SQLx for DB, Redis for caching, and tracing for observability.
 
 use crate::error::AppError;
-use crate::telemetry;
 use axum::{extract::State, response::IntoResponse, routing::get, Json, Router};
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
@@ -18,7 +17,7 @@ pub struct BuildErrorAnalytics {
     pub recent_errors: Vec<BuildErrorDetail>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BuildErrorDetail {
     pub id: i64,
     pub error_type: String,
@@ -49,11 +48,11 @@ pub async fn get_build_error_analytics(
     )
     .fetch_all(&pool)
     .await?;
-    let recent_errors = sqlx::query_as!(BuildErrorDetail,
-        "SELECT id, error_type, message, occurred_at FROM build_errors ORDER BY occurred_at DESC LIMIT 10"
+    let recent_errors = sqlx::query_as::<_, BuildErrorDetail>(
+        "SELECT id, error_type, message, occurred_at FROM build_errors ORDER BY occurred_at DESC LIMIT 10",
     )
-        .fetch_all(&pool)
-        .await?;
+    .fetch_all(&pool)
+    .await?;
 
     let analytics = BuildErrorAnalytics {
         total_errors: total_errors.0,
