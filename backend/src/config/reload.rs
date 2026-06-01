@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, ConfigError, Environment};
+use crate::config::{AppConfig as BaseAppConfig, ConfigError, Environment};
 use arc_swap::ArcSwap;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use std::sync::Arc;
@@ -26,19 +26,19 @@ impl IntoResponse for ConfigReloadError {
 
 /// Manages hot-reloadable application configuration.
 pub struct ConfigManager {
-    current_config: ArcSwap<AppConfig>,
+    current_config: ArcSwap<BaseAppConfig>,
 }
 
 impl ConfigManager {
     /// Create a new ConfigManager with the given initial configuration.
-    pub fn new(initial_config: AppConfig) -> Self {
+    pub fn new(initial_config: BaseAppConfig) -> Self {
         Self {
             current_config: ArcSwap::from(Arc::new(initial_config)),
         }
     }
 
     /// Get a reference to the current configuration.
-    pub fn load(&self) -> Arc<AppConfig> {
+    pub fn load(&self) -> Arc<BaseAppConfig> {
         self.current_config.load_full()
     }
 
@@ -49,7 +49,7 @@ impl ConfigManager {
 
         // Reload the layered config from the environment
         let env = Environment::from_env();
-        let new_config = AppConfig::load(env)?;
+        let new_config = BaseAppConfig::load(env)?;
 
         // Update the global configuration atomically
         self.current_config.store(Arc::new(new_config));
@@ -129,13 +129,10 @@ pub async fn handle_get_config(State(manager): State<Arc<ConfigManager>>) -> imp
 // `config:reload`. If the key is absent or unparseable the existing config
 // is kept and an error is logged.
 
-use std::sync::Arc;
-
 use redis::{AsyncCommands, Client as RedisClient};
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use tokio::sync::{watch, RwLock};
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 
 // ---------------------------------------------------------------------------
 // Error type
