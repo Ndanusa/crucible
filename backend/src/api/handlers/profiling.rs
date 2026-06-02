@@ -2,6 +2,7 @@ use crate::api::contracts::{
     ApiResponse, ProfileTriggerRequest, ProfileTriggerResponse, SystemStatus, ValidatedJson,
 };
 use crate::config::reload::ConfigManager;
+use crate::error::AppError;
 use crate::services::{
     error_recovery::ErrorManager, log_aggregator::LogAggregator, sys_metrics::MetricsExporter,
     tracing::TracingService,
@@ -72,7 +73,6 @@ pub async fn get_metrics(
 
     info!("Collecting performance metrics");
 
-
     // Instrument the metrics exporter call
     let metrics_span = TracingService::service_method_span("MetricsExporter", "get_metrics");
     let _metrics_enter = metrics_span.enter();
@@ -120,14 +120,18 @@ pub async fn get_health(State(state): State<Arc<AppState>>) -> Result<impl IntoR
     let db_span = TracingService::db_query_span("SELECT 1", "postgres", "PING");
     let _db_enter = db_span.enter();
 
-    let db_healthy = sqlx::query("SELECT 1")
-        .fetch_optional(&state.db)
-        .await
-        .map(|result| result.is_some())
-        .unwrap_or_else(|e| {
-            TracingService::record_error(&db_span, &e.to_string(), "database");
-            false
-        });
+    let db_healthy = if let Some(ref pool) = state.db {
+        sqlx::query("SELECT 1")
+            .fetch_optional(pool)
+            .await
+            .map(|result| result.is_some())
+            .unwrap_or_else(|e| {
+                TracingService::record_error(&db_span, &e.to_string(), "database");
+                false
+            })
+    } else {
+        false
+    };
     drop(_db_enter);
 
     let response = HealthResponse {
@@ -192,7 +196,7 @@ pub async fn get_system_status(State(state): State<Arc<AppState>>) -> ApiRespons
 /// Handler to trigger profile collection (CPU, memory profiling)
 #[instrument(skip_all, fields(http.method = "POST", http.route = "/api/profile"))]
 pub async fn trigger_profile_collection(
-    State(_state): State<Arc<AppState>>, 
+    State(_state): State<Arc<AppState>>,
     ValidatedJson(payload): ValidatedJson<ProfileTriggerRequest>,
 ) -> Result<ApiResponse<ProfileTriggerResponse>, AppError> {
     // In a real implementation, this would trigger a CPU/Memory profile
@@ -201,7 +205,10 @@ pub async fn trigger_profile_collection(
     // Validate duration doesn't cause overflow in chrono::Duration (Issue #208)
     // chrono::Duration::seconds() accepts i64, so we need to ensure payload.duration_secs <= i64::MAX
     if payload.duration_secs > i64::MAX as u32 {
-        return Err(AppError::BadRequest(format!("Invalid duration_secs (Issue #208): too large for time calculation, maximum {}", i64::MAX)));
+        return Err(AppError::BadRequest(format!(
+            "Invalid duration_secs (Issue #208): too large for time calculation, maximum {}",
+            i64::MAX
+        )));
     }
     // Additional safety check for chrono::Duration::seconds() bounds
     if payload.duration_secs > 2_147_483_647 {
@@ -213,8 +220,8 @@ pub async fn trigger_profile_collection(
         "Profiling collection triggered for label: {}",
         payload.label
     );
-    let estimated_completion = chrono::Utc::now()
-        + chrono::Duration::seconds(payload.duration_secs as i64);
+    let estimated_completion =
+        chrono::Utc::now() + chrono::Duration::seconds(payload.duration_secs as i64);
 
     Ok(ApiResponse::new(ProfileTriggerResponse {
         profile_id,

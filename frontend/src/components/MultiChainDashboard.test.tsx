@@ -5,9 +5,9 @@ import { describe, it, expect, vi } from 'vitest';
 describe('MultiChainDashboard', () => {
   it('renders configured networks list', () => {
     render(<MultiChainDashboard />);
-    expect(screen.getByText('Soroban Mainnet')).toBeInTheDocument();
-    expect(screen.getAllByText('Soroban Testnet').length).toBeGreaterThan(0);
-    expect(screen.getByText('Soroban Futurenet')).toBeInTheDocument();
+    expect(screen.getAllByText('Soroban Mainnet')[0]).toBeInTheDocument();
+    expect(screen.getAllByText('Soroban Testnet')[0]).toBeInTheDocument();
+    expect(screen.getAllByText('Soroban Futurenet')[0]).toBeInTheDocument();
   });
 
   it('allows network selection and displays corresponding details', () => {
@@ -54,13 +54,29 @@ describe('MultiChainDashboard', () => {
     fireEvent.submit(screen.getByTestId('add-network-form'));
 
     // Check custom badge / details
-    expect(screen.getAllByText('Private Devnet').length).toBeGreaterThan(0);
-    expect(screen.getByText('Custom')).toBeInTheDocument();
+    expect(screen.getAllByText('Private Devnet')[0]).toBeInTheDocument();
+    expect(screen.getAllByText('Custom')[0]).toBeInTheDocument();
 
     // Delete custom network
     const deleteBtn = screen.getByTestId(/delete-network-custom-/);
     fireEvent.click(deleteBtn);
 
     expect(screen.queryByText('Private Devnet')).not.toBeInTheDocument();
+  });
+
+  it('handles invalid JSON in localStorage gracefully', () => {
+    localStorage.setItem('crucible_custom_networks', '{ invalid_json ');
+    
+    // Spy on console.error to avoid noisy test output
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    
+    render(<MultiChainDashboard />);
+    
+    // Should still render default networks
+    expect(screen.getAllByText('Soroban Mainnet')[0]).toBeInTheDocument();
+    expect(consoleSpy).toHaveBeenCalledWith('Failed to parse custom networks', expect.any(Error));
+    
+    consoleSpy.mockRestore();
+    localStorage.removeItem('crucible_custom_networks');
   });
 });

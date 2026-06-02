@@ -4,14 +4,14 @@ import { TransactionSimulator } from './components/TransactionSimulator';
 import { GasCostEstimator } from './components/GasCostEstimator';
 import { MultiChainDashboard } from './components/MultiChainDashboard';
 import { ContractAbiExplorer } from './components/ContractAbiExplorer';
-import { Terminal, ShieldAlert, Cpu, Globe, Zap, Settings, RefreshCw, Activity, Layers } from 'lucide-react';
+import { DeveloperOnboardingTutorial } from './components/DeveloperOnboardingTutorial';
+import { Terminal, ShieldAlert, Cpu, Globe, Zap, Settings, RefreshCw, Activity, Layers, BookOpen } from 'lucide-react';
 import './App.css';
 
-// Union of all tabs from both branches
-type Tab = 'events' | 'simulator' | 'metrics' | 'multichain' | 'abi' | 'compiler' | 'dependencies';
+type Tab = 'tutorial' | 'events' | 'simulator' | 'metrics' | 'multichain' | 'abi' | 'compiler' | 'dependencies';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<Tab>('events');
+  const [activeTab, setActiveTab] = useState<Tab>('tutorial');
 
   // Compiler state
   const [compileProjName, setCompileProjName] = useState('my-soroban-contract');
@@ -79,6 +79,15 @@ function App() {
         <nav className="header-tabs" aria-label="Dashboard views">
           <button
             type="button"
+            className={`tab-btn ${activeTab === 'tutorial' ? 'active' : ''}`}
+            onClick={() => setActiveTab('tutorial')}
+            data-testid="tab-tutorial"
+          >
+            <BookOpen size={15} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
+            Tutorial
+          </button>
+          <button
+            type="button"
             className={`tab-btn ${activeTab === 'events' ? 'active' : ''}`}
             onClick={() => setActiveTab('events')}
             data-testid="tab-events"
@@ -144,6 +153,7 @@ function App() {
       </header>
       
       <main className="app-main">
+        {activeTab === 'tutorial' && <DeveloperOnboardingTutorial />}
         {activeTab === 'events' && <EventListenerDashboard />}
         {activeTab === 'simulator' && <TransactionSimulator />}
         {activeTab === 'metrics' && <GasCostEstimator />}

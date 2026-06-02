@@ -6,11 +6,11 @@ describe('ContractAbiExplorer', () => {
   it('renders default Counter contract and its functions list', () => {
     render(<ContractAbiExplorer />);
 
-    expect(screen.getByText('Counter')).toBeInTheDocument();
-    expect(screen.getAllByText('increment').length).toBeGreaterThan(0);
-    expect(screen.getByText('decrement')).toBeInTheDocument();
-    expect(screen.getByText('get_value')).toBeInTheDocument();
-    expect(screen.getByText('reset')).toBeInTheDocument();
+    expect(screen.getAllByText('Counter')[0]).toBeInTheDocument();
+    expect(screen.getAllByText('increment')[0]).toBeInTheDocument();
+    expect(screen.getAllByText('decrement')[0]).toBeInTheDocument();
+    expect(screen.getAllByText('get_value')[0]).toBeInTheDocument();
+    expect(screen.getAllByText('reset')[0]).toBeInTheDocument();
   });
 
   it('switches between contracts', () => {
@@ -19,9 +19,9 @@ describe('ContractAbiExplorer', () => {
     const tokenBtn = screen.getByTestId('abi-select-token');
     fireEvent.click(tokenBtn);
 
-    expect(screen.getAllByText('initialize').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('balance').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('transfer').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('initialize')[0]).toBeInTheDocument();
+    expect(screen.getAllByText('balance')[0]).toBeInTheDocument();
+    expect(screen.getAllByText('transfer')[0]).toBeInTheDocument();
   });
 
   it('renders input fields for selected functions dynamically', () => {
@@ -37,6 +37,7 @@ describe('ContractAbiExplorer', () => {
   it('handles execution and displays output stats', async () => {
     render(<ContractAbiExplorer />);
 
+    // Default is Counter, increment (u32, not get_value)
     const executeBtn = screen.getByTestId('execute-btn');
     fireEvent.click(executeBtn);
 
@@ -47,6 +48,54 @@ describe('ContractAbiExplorer', () => {
       expect(screen.getByTestId('execution-result')).toBeInTheDocument();
       expect(screen.getByText('Simulation Output')).toBeInTheDocument();
       expect(screen.getByText('Gas Expended')).toBeInTheDocument();
+    }, { timeout: 1500 });
+  });
+
+  it('handles execution for get_value (u32 branch)', async () => {
+    render(<ContractAbiExplorer />);
+    fireEvent.click(screen.getByTestId('method-get_value'));
+    fireEvent.click(screen.getByTestId('execute-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByText('42')).toBeInTheDocument();
+    }, { timeout: 1500 });
+  });
+
+  it('handles execution for deposit (u128 branch)', async () => {
+    render(<ContractAbiExplorer />);
+    fireEvent.click(screen.getByTestId('abi-select-vault'));
+    fireEvent.click(screen.getByTestId('method-deposit'));
+    
+    const amountInput = screen.getByTestId('input-amount');
+    fireEvent.change(amountInput, { target: { value: '1000' } });
+    
+    fireEvent.click(screen.getByTestId('execute-btn'));
+
+    await waitFor(() => {
+      // 1000 * 98 / 100 = 980
+      expect(screen.getByText('980')).toBeInTheDocument();
+    }, { timeout: 1500 });
+  });
+
+  it('handles execution for get_shares (u128 other branch)', async () => {
+    render(<ContractAbiExplorer />);
+    fireEvent.click(screen.getByTestId('abi-select-vault'));
+    fireEvent.click(screen.getByTestId('method-get_shares'));
+    
+    fireEvent.click(screen.getByTestId('execute-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('execution-result')).toBeInTheDocument();
+    }, { timeout: 1500 });
+  });
+
+  it('handles execution for void return', async () => {
+    render(<ContractAbiExplorer />);
+    fireEvent.click(screen.getByTestId('method-reset'));
+    fireEvent.click(screen.getByTestId('execute-btn'));
+
+    await waitFor(() => {
+      expect(screen.getAllByText('void').length).toBeGreaterThan(0);
     }, { timeout: 1500 });
   });
 });
