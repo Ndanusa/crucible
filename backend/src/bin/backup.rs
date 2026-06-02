@@ -36,12 +36,20 @@ use axum::{
 use chrono::{DateTime, Utc};
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::{net::SocketAddr, sync::Arc};
 use thiserror::Error;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, instrument};
 use uuid::Uuid;
+
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::{get, post},
+    Json, Router,
+};
 
 // ---------------------------------------------------------------------------
 // Error types
@@ -76,14 +84,14 @@ impl IntoResponse for AppError {
             }
             AppError::Redis(e) => {
                 error!("redis error: {e}");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "queue error".to_string(),
-                )
+                (StatusCode::INTERNAL_SERVER_ERROR, "queue error".to_string())
             }
             AppError::Internal(msg) => {
                 error!("internal error: {msg}");
-                (StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal error".to_string(),
+                )
             }
         };
 
@@ -167,8 +175,7 @@ impl Config {
     /// # Panics
     /// Panics if `DATABASE_URL` is not set.
     pub fn from_env() -> Self {
-        let database_url =
-            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+        let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
         let backup_queue =
@@ -179,8 +186,8 @@ impl Config {
             .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
             .parse()
             .expect("BIND_ADDR must be a valid socket address");
-        let backup_dir = std::env::var("BACKUP_DIR")
-            .unwrap_or_else(|_| "/var/backups/crucible".to_string());
+        let backup_dir =
+            std::env::var("BACKUP_DIR").unwrap_or_else(|_| "/var/backups/crucible".to_string());
 
         Self {
             database_url,
@@ -241,11 +248,9 @@ pub async fn create_backup_row(pool: &PgPool) -> Result<BackupRecord, sqlx::Erro
 
 /// Fetch all backup records, newest first.
 pub async fn list_backup_rows(pool: &PgPool) -> Result<Vec<BackupRecord>, sqlx::Error> {
-    sqlx::query_as::<_, BackupRecord>(
-        "SELECT * FROM backups ORDER BY created_at DESC",
-    )
-    .fetch_all(pool)
-    .await
+    sqlx::query_as::<_, BackupRecord>("SELECT * FROM backups ORDER BY created_at DESC")
+        .fetch_all(pool)
+        .await
 }
 
 /// Fetch a single backup record by ID.
@@ -338,9 +343,7 @@ pub async fn create_backup(
 
 /// `GET /backups` ΓÇö list all backups.
 #[instrument(skip(state))]
-pub async fn list_backups(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, AppError> {
+pub async fn list_backups(State(state): State<AppState>) -> Result<impl IntoResponse, AppError> {
     let records = list_backup_rows(&state.db).await?;
     Ok(Json(records))
 }
@@ -368,7 +371,9 @@ pub async fn restore_backup(
         .ok_or(AppError::NotFound)?;
 
     let file_path = record.file_path.ok_or_else(|| {
-        AppError::Internal(format!("backup {id} has no file_path; it may not be completed yet"))
+        AppError::Internal(format!(
+            "backup {id} has no file_path; it may not be completed yet"
+        ))
     })?;
 
     let job = RestoreJob {
@@ -410,8 +415,7 @@ pub fn build_router(state: AppState) -> Router {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 

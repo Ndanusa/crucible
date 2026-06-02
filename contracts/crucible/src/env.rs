@@ -7,9 +7,8 @@ use crate::account::AccountHandle;
 use crate::cost::CostReport;
 use crate::sim::SimulatedTx;
 use soroban_sdk::{
-    testutils::{Events, Ledger, ContractEvents},
-    Address, Env, IntoVal, Val, Vec as SorobanVec,
-    FromVal,
+    testutils::{ContractEvents, Events, Ledger},
+    Address, Env, FromVal, IntoVal, Val, Vec as SorobanVec,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -259,7 +258,9 @@ impl MockEnv {
             }
             let mut matches = true;
             for (i, filter_topic) in filter_topics.iter().enumerate() {
-                if format!("{:?}", filter_topic) != format!("{:?}", event_topics.get(i as u32).unwrap()) {
+                if format!("{:?}", filter_topic)
+                    != format!("{:?}", event_topics.get(i as u32).unwrap())
+                {
                     matches = false;
                     break;
                 }
@@ -313,7 +314,7 @@ impl MockEnv {
         let mut budget = self.inner.budget();
         budget.reset_default();
 
-        self.inner.mock_auths(&[]); 
+        self.inner.mock_auths(&[]);
         self.inner.mock_all_auths();
 
         let result = f();
@@ -322,7 +323,7 @@ impl MockEnv {
         let auths = self.inner.auths().iter().map(|(a, _)| a.clone()).collect();
 
         SimulatedTx::new(
-            (instructions / 100) as i64, 
+            (instructions / 100) as i64,
             instructions,
             auths,
             true,

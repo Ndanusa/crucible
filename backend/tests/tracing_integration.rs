@@ -6,7 +6,7 @@
 //! - Error propagation works correctly
 //! - Performance overhead is acceptable
 
-use backend::services::tracing::{TracingService, TracingConfig};
+use backend::services::tracing::{TracingConfig, TracingService};
 use tracing::{info_span, Instrument};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -19,12 +19,12 @@ mod tests {
     #[test]
     fn test_http_request_span_creation() {
         let span = TracingService::http_request_span("GET", "/api/users", Some("user123"));
-        
+
         // Verify span is created
         if let Some(metadata) = span.metadata() {
             assert_eq!(metadata.name(), "http.request");
         }
-        
+
         // Span should have fields for http.method, http.route, user.id
         drop(span);
     }
@@ -34,7 +34,7 @@ mod tests {
     fn test_db_query_span_creation() {
         let query = "SELECT * FROM users WHERE id = $1";
         let span = TracingService::db_query_span(query, "postgres", "SELECT");
-        
+
         if let Some(metadata) = span.metadata() {
             assert_eq!(metadata.name(), "db.query");
         }
@@ -45,7 +45,7 @@ mod tests {
     #[test]
     fn test_redis_command_span_creation() {
         let span = TracingService::redis_command_span("GET", Some("user:123"));
-        
+
         if let Some(metadata) = span.metadata() {
             assert_eq!(metadata.name(), "db.redis.command");
         }
@@ -56,7 +56,7 @@ mod tests {
     #[test]
     fn test_service_method_span_creation() {
         let span = TracingService::service_method_span("UserService", "get_user");
-        
+
         if let Some(metadata) = span.metadata() {
             assert_eq!(metadata.name(), "service.method");
         }
@@ -67,7 +67,7 @@ mod tests {
     #[test]
     fn test_job_span_creation() {
         let span = TracingService::job_span("process_transaction", "job-456");
-        
+
         if let Some(metadata) = span.metadata() {
             assert_eq!(metadata.name(), "job.execute");
         }
@@ -78,9 +78,9 @@ mod tests {
     #[test]
     fn test_error_recording() {
         let span = TracingService::http_request_span("POST", "/api/orders", None);
-        
+
         TracingService::record_error(&span, "Database connection failed", "database");
-        
+
         // Span should have error.type field recorded
         drop(span);
     }
@@ -88,11 +88,15 @@ mod tests {
     /// Test span nesting (parent-child relationships)
     #[tokio::test]
     async fn test_span_hierarchy() {
-        let http_span = info_span!("http.request", http.method = "GET", http.route = "/api/users");
-        
+        let http_span = info_span!(
+            "http.request",
+            http.method = "GET",
+            http.route = "/api/users"
+        );
+
         async {
             let db_span = info_span!("db.query", db.system = "postgres");
-            
+
             async {
                 // This span should be a child of db_span
                 tracing::info!("Executing query");
@@ -109,7 +113,7 @@ mod tests {
     fn test_query_truncation() {
         let long_query = "SELECT * FROM users WHERE ".to_string() + &"x".repeat(500);
         let span = TracingService::db_query_span(&long_query, "postgres", "SELECT");
-        
+
         // Query should be truncated to 256 characters
         drop(span);
     }
@@ -133,25 +137,21 @@ mod tests {
     /// Test custom sampling ratio
     #[test]
     fn test_custom_sampling_ratio() {
-        let config = TracingConfig::default()
-            .with_sampling_ratio(0.5);
+        let config = TracingConfig::default().with_sampling_ratio(0.5);
         assert_eq!(config.sampling_ratio, 0.5);
 
         // Test bounds
-        let config_high = TracingConfig::default()
-            .with_sampling_ratio(1.5);
+        let config_high = TracingConfig::default().with_sampling_ratio(1.5);
         assert_eq!(config_high.sampling_ratio, 1.0);
 
-        let config_low = TracingConfig::default()
-            .with_sampling_ratio(-0.5);
+        let config_low = TracingConfig::default().with_sampling_ratio(-0.5);
         assert_eq!(config_low.sampling_ratio, 0.0);
     }
 
     /// Test OTLP endpoint configuration
     #[test]
     fn test_otlp_endpoint_config() {
-        let config = TracingConfig::default()
-            .with_otlp_endpoint("http://jaeger:4317".to_string());
+        let config = TracingConfig::default().with_otlp_endpoint("http://jaeger:4317".to_string());
         assert_eq!(config.otlp_endpoint, "http://jaeger:4317");
     }
 
@@ -169,7 +169,7 @@ mod tests {
     fn test_multiline_query_truncation() {
         let multiline_query = "SELECT *\nFROM users\nWHERE id = $1";
         let span = TracingService::db_query_span(multiline_query, "postgres", "SELECT");
-        
+
         // Should only include first line
         drop(span);
     }
@@ -198,13 +198,13 @@ mod tests {
     #[test]
     fn test_span_metadata() {
         let span = TracingService::http_request_span("POST", "/api/orders", Some("user456"));
-        
+
         let metadata = span.metadata();
         if let Some(meta) = metadata {
             assert_eq!(meta.name(), "http.request");
             assert!(meta.is_span());
         }
-        
+
         drop(span);
     }
 
@@ -233,11 +233,11 @@ mod tests {
     #[test]
     fn test_error_types() {
         let span = TracingService::db_query_span("SELECT 1", "postgres", "SELECT");
-        
+
         TracingService::record_error(&span, "Connection timeout", "timeout");
         TracingService::record_error(&span, "Query syntax error", "syntax");
         TracingService::record_error(&span, "Permission denied", "authorization");
-        
+
         drop(span);
     }
 
@@ -247,7 +247,7 @@ mod tests {
         let user_span = TracingService::service_method_span("UserService", "create_user");
         let order_span = TracingService::service_method_span("OrderService", "create_order");
         let payment_span = TracingService::service_method_span("PaymentService", "process_payment");
-        
+
         drop(user_span);
         drop(order_span);
         drop(payment_span);
@@ -258,7 +258,7 @@ mod tests {
     fn test_job_span_with_uuid() {
         let job_id = uuid::Uuid::new_v4().to_string();
         let span = TracingService::job_span("background_task", &job_id);
-        
+
         if let Some(metadata) = span.metadata() {
             assert_eq!(metadata.name(), "job.execute");
         }
@@ -276,18 +276,15 @@ mod benchmarks {
     #[test]
     fn bench_span_creation() {
         let iterations = 10_000;
-        
+
         let start = Instant::now();
         for i in 0..iterations {
-            let span = TracingService::http_request_span(
-                "GET",
-                "/api/test",
-                Some(&format!("user{}", i)),
-            );
+            let span =
+                TracingService::http_request_span("GET", "/api/test", Some(&format!("user{}", i)));
             drop(span);
         }
         let duration = start.elapsed();
-        
+
         let avg_ns = duration.as_nanos() / iterations;
         println!("Average span creation time: {} ns", avg_ns);
         
@@ -301,7 +298,7 @@ mod benchmarks {
     #[tokio::test]
     async fn bench_nested_spans() {
         let iterations = 1_000;
-        
+
         let start = Instant::now();
         for _ in 0..iterations {
             let http_span = info_span!("http.request");
@@ -317,10 +314,10 @@ mod benchmarks {
             .await;
         }
         let duration = start.elapsed();
-        
+
         let avg_us = duration.as_micros() / iterations;
         println!("Average nested span overhead: {} μs", avg_us);
-        
+
         // Assert reasonable overhead (< 10 microseconds)
         assert!(avg_us < 10, "Nested span overhead too high: {} μs", avg_us);
     }

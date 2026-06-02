@@ -1,6 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use backend::api::handlers::dashboard::{DashboardMetrics, ContractStats};
+use backend::api::handlers::dashboard::{ContractStats, DashboardMetrics};
 use chrono::Utc;
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 fn benchmark_dashboard_metrics_serialization(c: &mut Criterion) {
     let metrics = DashboardMetrics {

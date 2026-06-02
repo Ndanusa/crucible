@@ -1,7 +1,14 @@
 # Crucible Backend
 
-High-performance Rust backend for Log-Based Alerting.
+High-performance Rust backend for the Crucible smart contract testing platform, providing performance profiling, mock service layers, specialized serialization utilities, and robust background monitoring.
 
+## 🚀 Tech Stack
+- **Web Framework**: Axum (async Rust)
+- **Runtime**: Tokio
+- **Database**: PostgreSQL (via SQLx 0.8)
+- **Caching & Jobs**: Redis (via Apalis)
+- **Observability**: OpenTelemetry + Tracing
+- **API Documentation**: Utoipa (Swagger UI)
 ## Technical Stack
 - **Axum**: High-performance web framework.
 - **SQLx**: Async PostgreSQL driver with compile-time checked queries.
@@ -17,6 +24,21 @@ High-performance Rust backend for Log-Based Alerting.
 
 ### Log Ingestion
 - `POST /api/alerts/ingest` - Ingest a log entry for pattern matching.
+
+### Build Error Analytics Dashboard API
+- `GET /api/v1/errors/dashboard/build-errors` — Returns build error analytics (total errors, error types, recent errors)
+    - **Response:**
+      ```json
+      {
+        "total_errors": 42,
+        "error_types": [["TypeA", 20], ["TypeB", 22]],
+        "recent_errors": [
+          {"id": 1, "error_type": "TypeA", "message": "...", "occurred_at": "2024-05-28T12:34:56"}
+        ]
+      }
+      ```
+    - **Description:**
+      Returns analytics for build errors, including total count, breakdown by type, and recent errors. Uses Redis for caching and SQLx for DB access. See `src/api/handlers/errors.rs` for details.
 
 ## Database Schema
 ```sql
@@ -40,13 +62,13 @@ CREATE TABLE log_alerts (
 
 ---
 
-## Architecture
+## 🏗️ Architecture
 
-```
+```text
 ┌──────────────┐     ┌──────────────────────┐     ┌────────────────┐
-│   Clients    │────▶│   Axum HTTP Server    │────▶│  PostgreSQL 16 │
+│   Clients    │────▶│   Axum HTTP Server   │────▶│  PostgreSQL 16 │
 │  (port 8080) │     │                      │     │  (port 5432)   │
-└──────────────┘     │  Middleware Stack:    │     └────────────────┘
+└──────────────┘     │  Middleware Stack:   │     └────────────────┘
                      │  ├─ CORS             │
                      │  ├─ Tracing          │     ┌────────────────┐
                      │  ├─ Compression      │────▶│   Redis 7      │
@@ -54,110 +76,45 @@ CREATE TABLE log_alerts (
                      └──────────────────────┘     └────────────────┘
 ```
 
-## Services
+---
 
-| Service       | Image                 | Port  | Purpose                         |
-|---------------|-----------------------|-------|----------------------------------|
-| `app`         | Custom (Dockerfile)   | 8080  | Rust/Axum HTTP API server       |
-| `postgres`    | `postgres:16-alpine`  | 5432  | Primary database (SQLx)         |
-| `redis`       | `redis:7-alpine`      | 6379  | Caching & job queues            |
-| `pgadmin`     | `dpage/pgadmin4`      | 5050  | DB admin UI (dev-tools profile) |
-| `redis-commander` | `rediscommander/redis-commander` | 8081 | Redis admin UI (dev-tools profile) |
-
-## Quick Start
+## ⚡ Quick Start
 
 ### Prerequisites
-
 - [Docker](https://docs.docker.com/get-docker/) ≥ 24.0
 - [Docker Compose](https://docs.docker.com/compose/install/) ≥ 2.20
 - [Rust](https://rustup.rs/) ≥ 1.78 (for local development)
 
-### 1. Clone and configure
-
+### Starting Services
 ```bash
 cd backend
 cp .env.example .env
-# Edit .env to set secrets for production
-```
 
-### 2. Start services
-
-```bash
 # Start all core services (app, postgres, redis)
 docker compose up -d
 
-# Start with admin tools (pgAdmin + Redis Commander)
-docker compose --profile dev-tools up -d
-
-# Rebuild after code changes
-docker compose up -d --build
-```
-
-### 3. Verify
-
-```bash
 # Check service health
-docker compose ps
-
-# Test the health endpoint
 curl http://localhost:8080/health
-
-# Expected response:
-# {"status":"ok","version":"0.1.0","database":"healthy","redis":"healthy"}
-
-# Test the API status endpoint
-curl http://localhost:8080/api/v1/status
 ```
 
-### 4. View logs
-
+### Local Development (without Docker)
+Run Postgres and Redis in Docker, but the Rust app natively:
 ```bash
-# All services
-docker compose logs -f
-
-# Specific service
-docker compose logs -f app
-docker compose logs -f postgres
-docker compose logs -f redis
-```
-
-### 5. Stop services
-
-```bash
-# Stop (preserves data volumes)
-docker compose down
-
-# Stop and remove all data
-docker compose down -v
-```
-
-## Local Development (without Docker)
-
-For faster iteration, run Postgres and Redis in Docker but the Rust app natively:
-
-```bash
-# Start only infrastructure services
 docker compose up -d postgres redis
-
-# Run the Rust app locally
 export DATABASE_URL=postgres://crucible:crucible_secret@localhost:5432/crucible_db
 export REDIS_URL=redis://:crucible_redis_secret@localhost:6379/0
 cargo run
 ```
 
-### Running Tests
+---
 
-```bash
-# Unit tests (no external services needed)
-cargo test
+## ⚙️ Configuration
 
-# With all features
-cargo test --all-features
+This application uses a layered configuration system. Base values and environment-specific tunings are compiled directly into the binary, ensuring safe fallbacks. Infrastructure secrets and dynamic overrides are provided securely at runtime via environment variables.
 
-# Integration tests (requires running postgres + redis)
-cargo test -- --ignored
-```
+### Environment Variables
 
+| Variable | Default | Required in Prod? | Description |
 ## Project Structure
 
 ```
@@ -364,6 +321,27 @@ The backend runs several background workers for system health and data consisten
 - `src/jobs/` – Background job definitions (Apalis)
 - `src/services/` – Business logic and external integrations
 - `src/telemetry/` – Observability and logging setup
+
+## Build Request Deduplication
+
+The backend includes a build request deduplication service in `src/services/dedup.rs`.
+It fingerprints build submissions with SHA-256, uses Redis `SET NX EX` for fast
+in-flight duplicate suppression, persists accepted fingerprints in PostgreSQL,
+and enqueues accepted requests into a Redis list for build workers.
+
+The service exposes an Axum router for `POST /build-requests` when mounted by the
+application. Duplicate submissions return `duplicate` or `in_progress` decisions
+instead of enqueueing repeated build work.
+
+Schema is managed by `migrations/20260528010000_build_request_dedup.sql`. The
+service also exposes `BuildDedupService::ensure_schema` for isolated integration
+tests that need to provision the table directly.
+
+## Test Fixture Factory
+
+`src/test_utils/factories.rs` provides `FixtureFactory` and `TestFixture` for
+creating related users, products, orders, and sessions in tests. Existing
+domain-specific factories remain available.
 - `src/utils/` – Serialization, validation, XDR helpers
 - `src/test_utils/` – Mock traits for unit testing
 
@@ -380,6 +358,7 @@ The backend runs several background workers for system health and data consisten
 | Module | Description |
 |---|---|
 | `sys_metrics` | Build system metrics exporter with PostgreSQL persistence and Redis caching (compilation times, dependency counts, cache hit rates) |
+| `cache_metrics` | Cache operation analytics with PostgreSQL event storage and Redis-cached summaries |
 | `error_recovery` | Tracks retry state for failing tasks with configurable max retries |
 | `log_aggregator` | Async MPSC-based log pipeline; persists entries via a background worker |
 | `log_alerts` | Threshold-based alerting over the log pipeline with sliding-window evaluation |
@@ -422,6 +401,36 @@ The backend runs several background workers for system health and data consisten
 - **Observability**: OpenTelemetry + Tracing
 - **API Documentation**: Utoipa (Swagger UI)
 
+## Workers Module
+
+The backend includes a dedicated workers module for background processing and system monitoring:
+
+### 🌟 Cache Warming System
+Pre-loads frequently accessed data into Redis cache to improve performance.
+- Automatically warms dashboard metrics and popular build data
+- Configurable warm intervals and TTL settings
+- Integrated with PostgreSQL database queries
+
+### 🚀 Response Caching Middleware
+HTTP response caching middleware that stores API responses in Redis.
+- Automatic cache key generation based on request method, URI, and query parameters
+- Configurable TTL for cached responses
+- Integration with Axum middleware stack
+
+### 📊 Job Progress Tracking
+Monitors and reports progress for long-running background jobs.
+- Real-time progress tracking with percentage calculation
+- Redis-based storage for job state
+- Support for completion steps and total steps tracking
+
+### 🩺 Worker Health Monitoring
+Tracks and reports health status of background workers.
+- Heartbeat monitoring with configurable thresholds
+- Automatic health status calculation
+- Redis-based health state storage
+
+All workers are designed to be production-ready with comprehensive error handling, tracing integration, and proper resource management.
+
 ## API Endpoints
 
 | Method | Path | Description |
@@ -441,11 +450,15 @@ The backend runs several background workers for system health and data consisten
 | `GET` | `/api/v1/profiling/health` | Service health check (OpenAPI) |
 | `GET` | `/api/v1/dashboard/metrics` | Dashboard aggregated metrics with Redis caching |
 | `GET` | `/api/v1/dashboard/contracts/:contract_id/stats` | Contract-specific statistics |
+| `POST` | `/cache-metrics` | Record a cache operation metric |
+| `GET` | `/cache-metrics` | List recent cache operation metrics |
+| `GET` | `/cache-metrics/summary` | Cache hit/miss, latency, payload, and operation analytics |
 | `GET` | `/api/v1/profiling/prometheus` | Prometheus-compatible metrics |
 | `GET` | `/api/status` | System health summary and recovery status |
 | `POST` | `/api/profile` | Trigger a manual profiling collection run |
 | `GET` | `/api/dashboard` | Aggregated dashboard data: metrics, recovery tasks, and active alerts (Redis-cached, 30 s TTL) |
 | `GET` | `/swagger-ui` | Interactive API documentation |
+| `GET` | `/api/v1/errors/dashboard/build-errors` | Returns build error analytics (total errors, error types, recent errors) |
 
 ## Running
 ## OpenTelemetry Tracing
@@ -612,200 +625,68 @@ Benchmarked on a 4-core system with 8GB RAM:
 
 | Metric | Without Tracing | With Tracing | Overhead |
 |---|---|---|---|
-| p50 Latency | 2.1ms | 2.2ms | +0.1ms (+4.8%) |
-| p95 Latency | 8.5ms | 8.6ms | +0.1ms (+1.2%) |
-| p99 Latency | 15.2ms | 15.5ms | +0.3ms (+2.0%) |
-| Memory (RSS) | 45MB | 48MB | +3MB (+6.7%) |
-| CPU Usage | 12% | 12.5% | +0.5% (+4.2%) |
+| `APP_ENV` | `development` | Yes | `development`, `staging`, or `production` |
+| `APP_SERVER__PORT` | (from TOML) | No | HTTP server listen port. |
+| `APP_SERVER__TLS__CERT_PATH` | None | Yes | Path to the TLS certificate chain. |
+| `APP_SERVER__TLS__KEY_PATH` | None | Yes | Path to the TLS private key. **(SENSITIVE)** |
+| `APP_DATABASE__URL` | None | Yes | PostgreSQL connection string. **(SENSITIVE)** |
+| `APP_REDIS__URL` | None | Yes | Redis connection string. **(SENSITIVE)** |
 
-**Conclusion**: < 1% p95 latency overhead ✅
+### Configuration Hot-Reload
 
-### Troubleshooting
-
-#### Traces not appearing in Jaeger
-
-1. **Check Jaeger is running**:
-   ```bash
-   docker ps | grep jaeger
-   curl http://localhost:14269/  # Health check
-   ```
-
-2. **Verify OTLP endpoint**:
-   ```bash
-   echo $OTLP_ENDPOINT  # Should be http://localhost:4317
-   ```
-
-3. **Check backend logs**:
-   ```bash
-   cargo run -p backend 2>&1 | grep -i "tracing\|otlp"
-   ```
-
-4. **Test OTLP connectivity**:
-   ```bash
-   telnet localhost 4317
-   ```
-
-#### High memory usage
-
-1. **Reduce sampling rate**:
-   ```bash
-   export ENV=production  # 1% sampling
-   ```
-
-2. **Lower span limits** in `TracingConfig`:
-   ```rust
-   config.max_attributes_per_span = 64;
-   config.max_events_per_span = 64;
-   ```
-
-#### Missing span attributes
-
-Ensure you're using the correct span factory:
-
-```rust
-// ✅ Correct
-let span = TracingService::db_query_span(query, "postgres", "SELECT");
-
-// ❌ Incorrect
-let span = info_span!("db.query");  // Missing semantic conventions
-```
-
-### Production Deployment
-
-#### Jaeger Collector Setup
-
-For production, use a dedicated Jaeger Collector with persistent storage:
-
-```yaml
-# docker-compose-prod.yml
-services:
-  jaeger-collector:
-    image: jaegertracing/jaeger-collector:1.54
-    environment:
-      - SPAN_STORAGE_TYPE=elasticsearch
-      - ES_SERVER_URLS=http://elasticsearch:9200
-    ports:
-      - "4317:4317"  # OTLP gRPC
-      - "14268:14268"  # Jaeger Thrift
-
-  jaeger-query:
-    image: jaegertracing/jaeger-query:1.54
-    environment:
-      - SPAN_STORAGE_TYPE=elasticsearch
-      - ES_SERVER_URLS=http://elasticsearch:9200
-    ports:
-      - "16686:16686"  # Jaeger UI
-
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
-    environment:
-      - discovery.type=single-node
-    volumes:
-      - es_data:/usr/share/elasticsearch/data
-```
-
-#### Backend Configuration
+The backend supports atomic configuration hot-reloading without restarting the server via `ArcSwap`.
 
 ```bash
-# Production environment variables
-export OTLP_ENDPOINT=http://jaeger-collector:4317
-export ENV=production
-export RUST_LOG=info,crucible=info
+# Trigger a reload from the HTTP endpoint
+curl -X POST http://localhost:8080/api/config/reload
 ```
 
-#### Monitoring
+---
 
-Monitor tracing system health:
+## 📡 API Endpoints
 
-1. **Jaeger Collector Metrics**: `http://jaeger-collector:14269/metrics`
-2. **Span Drop Rate**: Should be < 0.1%
-3. **Collector Queue Size**: Should be < 1000
-4. **Backend Memory**: Should be stable (no leaks)
+Crucible uses a typed contract system for all API endpoints to ensure consistency.
 
-### Testing
+| Category | Method | Path | Description |
+|---|---|---|---|
+| **Health** | `GET` | `/health` | Health check (DB + Redis) |
+| **Health** | `GET` | `/api/status` | System health summary and recovery status |
+| **Dashboard**| `GET` | `/api/v1/dashboard/metrics`| Dashboard aggregated metrics with Redis caching |
+| **Errors** | `GET` | `/api/v1/errors/dashboard/build-errors`| Returns build error analytics |
+| **Config** | `GET` | `/api/config` | Retrieve current configuration (sanitized) |
+| **Config** | `POST` | `/api/config/reload` | Trigger configuration hot-reload |
+| **Docs** | `GET` | `/swagger-ui` | Interactive API documentation |
 
-#### Unit Tests
+---
 
-```bash
-# Run tracing unit tests
-cargo test -p backend tracing
+## 🔭 Observability & Tracing
 
-# Run integration tests
-cargo test -p backend --test tracing_integration
-```
+Production-grade distributed tracing with OTLP exporter and Jaeger integration.
 
-#### Load Tests
+1. **Start Jaeger**: `docker-compose -f docker-compose-jaeger.yml up -d`
+2. **Run Backend**: `export OTLP_ENDPOINT=http://localhost:4317; cargo run -p backend`
+3. **View Traces**: Open `http://localhost:16686`
 
-```bash
-# Run load tests with tracing enabled
-cargo test -p backend --test load_tests -- --nocapture
+Spans from every `#[tracing::instrument]`-annotated function are exported with **< 1% latency overhead**.
 
-# Compare performance with/without tracing
-./scripts/benchmark_tracing.sh
-```
+---
 
-#### Trace Validation
+## 🛠️ Background Services & Features
 
-Validate that traces are correctly structured:
+### 1. Build System Metrics Exporter
+Tracks compilation times, dependency counts, cache hit rates, and resource usage. Includes durable storage in PostgreSQL and high-performance caching in Redis.
 
-```bash
-# Generate test traffic
-curl http://localhost:8080/api/v1/profiling/health
+### 2. Critical Error Alerting
+Dispatches notifications when a critical condition fires (e.g., `db_down`). Deduplicates within a configurable cooldown window and publishes to Redis pub/sub.
 
-# Check Jaeger for the trace
-curl "http://localhost:16686/api/traces?service=crucible-backend&limit=1"
-```
+### 3. Feature Flags
+Stored in PostgreSQL and cached in Redis with a 5-minute TTL.
 
-### Further Reading
+---
 
-- [OpenTelemetry Specification](https://opentelemetry.io/docs/specs/otel/)
-- [Jaeger Documentation](https://www.jaegertracing.io/docs/)
-- [Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/)
-- [Tracing Best Practices](https://opentelemetry.io/docs/instrumentation/rust/)
+## ⏱️ Cron Job Scheduler
 
-## Development
-
-### Running the App
-```bash
-cargo run -p backend
-```
-
-### Running the backup service
-```bash
-export DATABASE_URL="postgres://postgres:password@localhost/crucible_dev"
-export REDIS_URL="redis://127.0.0.1/"
-export BACKUP_DIR="/tmp/crucible_backups"
-
-cargo run -p backend --bin backup
-```
-
-## Testing
-
-### All tests
-```bash
-# All tests (unit + integration + load)
-cargo test -p backend
-
-# Load tests only
-cargo test -p backend --test load_tests -- --nocapture
-
-# Build metrics integration tests (requires PostgreSQL and Redis)
-cargo test -p backend --test build_metrics_tests -- --ignored
-```
-
-## Build System Metrics Exporter
-
-The `sys_metrics` module provides a production-ready build system metrics exporter that tracks and analyzes build performance across projects.
-
-### Features
-
-- **Build Tracking**: Record compilation times, dependency counts, and resource usage
-- **Status Monitoring**: Track build success/failure/cancellation rates
-- **Cache Analytics**: Monitor cache hit rates to optimize build performance
-- **Resource Metrics**: Track CPU and memory usage during builds
-- **PostgreSQL Persistence**: Durable storage for historical metrics
-- **Redis Caching**: High-performance caching with automatic invalidation
-- **Aggregated Summaries**: Get project-level statistics and success rates
+The distributed cron job scheduler guarantees single execution per tick across multiple instances, provides exact timeouts with safe cancellation, tracks full execution history in PostgreSQL, and offers graceful shutdown.
 
 ### Usage Example
 
@@ -850,6 +731,16 @@ println!("Success rate: {}%", summary.success_rate);
 - `get_recent_metrics(limit)` - Get recent builds across all projects
 - `delete_project_metrics(project_name)` - Delete all metrics for a project
 
+## Cache Metrics and Analytics
+
+The `cache_metrics` module records cache operations as durable PostgreSQL events and caches aggregate summaries in Redis with a short TTL.
+
+- `CacheMetricsService::record(input)` - Persist a cache operation and invalidate affected summaries
+- `CacheMetricsService::recent(query)` - Read bounded recent cache events
+- `CacheMetricsService::summary(query)` - Return hit/miss counts, hit rate, latency, payload totals, and operation breakdowns
+- `CacheMetricsService::ensure_schema()` - Create the table and indexes for tests or embedded deployments
+- `router(service)` - Build Axum routes for recording and reading cache analytics
+
 ## Backup Service Configuration
 
 All configuration is via environment variables.
@@ -868,261 +759,204 @@ All configuration is via environment variables.
 
 ```rust
 use std::sync::Arc;
-use backend::config::reload::{AppConfig, ConfigWatcher};
 
-let watcher = Arc::new(ConfigWatcher::new(AppConfig::default()));
-let handle = watcher.handle(); // cheap to clone, share across handlers
+let mut scheduler = Scheduler::new(pool.clone(), redis_client.clone());
 
-// Manual reload
-watcher.reload(AppConfig { maintenance_mode: true, ..AppConfig::default() }).await;
+// Register a custom job
+scheduler.register(JobDefinition {
+    name: "health_check".to_string(),
+    cron_expr: "0 * * * * * *".to_string(), // Every minute
+    handler: Arc::new(HealthCheckJob),
+    timeout_secs: 10,
+    max_retries: 0,
+})?;
 
-// Reload from Redis key `config:current`
-watcher.reload_from_redis(&redis_client).await?;
+let scheduler_handle = scheduler.start()?;
 
-// Background watcher — subscribes to `config:reload` pub/sub channel
-watcher.watch(redis_client); // returns a JoinHandle
+// On application exit:
+// scheduler_handle.shutdown().await?;
 ```
 
-Trigger a reload from the Redis CLI:
+### Implementing a New Job
 
-```bash
-redis-cli SET config:current '{"log_level":"info","max_connections":50,"request_timeout_secs":30,"maintenance_mode":false,"redis_config_key":"config:current"}'
-redis-cli PUBLISH config:reload reload
-```
-
-## Critical Error Alerting
-
-`AlertDispatcher` sits on top of `log_alerts` and dispatches notifications when a critical condition fires. It deduplicates within a configurable cooldown window and publishes to Redis pub/sub.
+Implement the `JobHandler` trait for any struct.
 
 ```rust
-use std::sync::Arc;
-use backend::services::alerts::{AlertDispatcher, AlertNotification, NotificationLevel};
+use async_trait::async_trait;
+use crucible_backend::workers::scheduler::{JobHandler, JobContext};
+use crucible_backend::workers::error::JobError;
 
-let dispatcher = Arc::new(AlertDispatcher::new(Some(redis_client), 60));
+pub struct MyJob;
 
-// Dispatch directly
-dispatcher.dispatch(AlertNotification {
-    alert_key: "db_down".to_string(),
-    level: NotificationLevel::Critical,
-    title: "Database unreachable".to_string(),
-    message: "Pool exhausted after 3 retries".to_string(),
-    metadata: Default::default(),
-}).await?;
-
-// Or derive from a fired log_alerts::Alert (only Critical severity is dispatched)
-dispatcher.dispatch_alert(&fired_alert).await?;
-
-// Drain the in-memory queue
-let pending = dispatcher.drain_notifications().await;
-```
-
-Redis pub/sub channel defaults to `alerts:critical`; override with `.with_channel("my-channel")`.
-
-## OpenTelemetry Tracing
-
-Spans from every `#[tracing::instrument]`-annotated function are exported to an OTLP-compatible collector over HTTP/protobuf.
-
-```rust
-use backend::services::tracing::{init, TracingConfig};
-
-let _guard = init(TracingConfig::from_env())?;
-// spans are now exported; _guard flushes them on drop
-```
-
-| Environment variable | Default | Description |
-|---|---|---|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4318` | OTLP HTTP collector URL |
-| `OTEL_SERVICE_NAME` | `backend` | Service name on every span |
-| `RUST_LOG` | `backend=debug` | Log/span filter directive |
-
-Run a local collector with Docker:
-
-```bash
-docker run -d -p4317:4317 -p4318:4318 -p16686:16686 jaegertracing/all-in-one:latest
-# View traces at http://localhost:16686
-```
-
-## Feature Flags
-
-Feature flags are stored in PostgreSQL and cached in Redis with a 5-minute TTL.
-
-```rust
-let service = FeatureFlagService::new(pool, redis_client);
-
-// Check a flag
-if service.is_enabled("new_dashboard").await? {
-    // render new UI
+#[async_trait]
+impl JobHandler for MyJob {
+    async fn run(&self, ctx: JobContext) -> Result<(), JobError> {
+        // Business logic here
+        // The ctx contains the db pool, redis client, and run metadata
+        Ok(())
+    }
 }
-
-// Create / update a flag
-service.set("new_dashboard", true, "Enable redesigned dashboard").await?;
 ```
 
-## Database Seeds
+### Built-in Jobs
 
-Seeds are idempotent and safe to run multiple times:
+| Job | Default Cron | Purpose |
+|---|---|---|
+| `HealthCheckJob` | `0 * * * * * *` (Every minute) | Verifies Database and Redis connectivity. |
+| `CleanupJob` | `0 0 0 * * * *` (Daily at midnight) | Prunes `job_runs` history older than the configured retention period. |
+
+### Distributed Locking Behavior
+Before running a job, the scheduler issues `SET {job_name}:lock "1" NX PX {timeout_secs * 1000 + 5000}`. If the lock is already held by another running instance, the current instance skips the tick. The TTL ensures that if the node crashes hard without cleaning up the lock, it expires automatically shortly after the job would have timed out anyway.
+
+### Environment Variables
+- `SCHEDULER_ENABLED`: (bool) Set to `false` to prevent the scheduler from starting on this node.
+- `JOB_HISTORY_RETAIN_DAYS`: (integer) Days to retain job history before `CleanupJob` prunes it.
+
+---
+
+## 🧪 Testing
+
+This project utilizes highly isolated, in-process integration testing leveraging Axum's `oneshot` capability.
 
 ```bash
-# In application code
-run_all(&pool).await?;
-```
-
-
-## Test Utilities
-
-The `test_utils` module includes upstream mocks plus fixture factories for backend tests. The factory API creates consistent domain objects while allowing per-test customization.
-
-```rust
-use backend::test_utils::{build_order, build_product, build_session, build_user, OrderItem};
-use uuid::Uuid;
-
-let user = build_user()
-    .email("user@example.com")
-    .is_admin(true)
-    .finish();
-
-let product = build_product()
-    .name("New Product")
-    .price_cents(2999)
-    .finish();
-
-let order = build_order()
-    .user_id(user.id)
-    .add_item(OrderItem::new(product.id, product.name.clone(), 2, product.price_cents))
-    .finish();
-
-let session = build_session()
-    .user_id(user.id)
-    .expires_in_days(30)
-    .finish();
-```
-
-Factory helpers are re-exported from `backend::test_utils`, including `create_user`, `create_order`, `create_product`, `create_session`, and their builder/customization variants.
-
-### Unit tests only
-```bash
+# Unit tests
 cargo test -p backend --lib
-```
 
-### Integration tests only
-```bash
+# Integration tests (requires PostgreSQL and Redis)
 cargo test -p backend --test integration_tests
 ```
 
-## Integration Test Framework
+### Test Database Isolation Strategy
+We utilize **Isolated Schemas**. For every `#[tokio::test]`, the `TestContext` dynamically creates a completely isolated PostgreSQL schema (e.g. `test_a1b2c3d4...`) and maps the SQLx connection pool strictly to that `search_path`.
+- **Parallelization**: Tests run fully concurrently.
+- **Safety**: The schema is dropped entirely on `Drop`.
 
-Integration tests live under `tests/integration/` and are compiled as a single
-test crate via the `tests/integration_tests.rs` entry point.
-
-### Layout
-
-```
-tests/
-├── integration_tests.rs        # Cargo entry point — declares the integration module
-├── api_tests.rs                # Legacy API smoke test
-└── integration/
-    ├── mod.rs                  # Shared helpers (test_app builder)
-    ├── api_status_test.rs      # Tests for GET /api/status
-    ├── api_profile_test.rs     # Tests for POST /api/profile
-    └── services_test.rs        # Tests for MetricsExporter, ErrorManager, LogAggregator
-```
-
-### Shared helpers
-
-`integration::test_app()` returns a fully-configured [`axum::Router`] backed by
-fresh in-memory service instances. Use [`tower::ServiceExt::oneshot`] to send a
-single request without binding a TCP socket:
+### Integration Test Framework Example
+You can utilize the `ApiTestClient` located in `src/test_utils/client.rs`.
 
 ```rust
+use crate::test_utils::{setup, client::ApiTestClient};
 use tower::ServiceExt;
 use hyper::{Request, StatusCode};
-use axum::body::Body;
 
 #[tokio::test]
-async fn my_test() {
-    let response = test_app()
-        .oneshot(Request::builder().uri("/api/status").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
+async fn test_create_resource() {
+    let ctx = setup().await;
+    let client = ApiTestClient::new(ctx.app);
+    
+    let response = client.post("/api/resources")
+        .bearer("mock-token")
+        .json(&serde_json::json!({ "name": "Crucible" }))
+        .send()
+        .await;
 
-    assert_eq!(response.status(), StatusCode::OK);
+    response.assert_status(StatusCode::CREATED);
 }
 ```
 
-### Adding new tests
+---
 
-1. Create a new file under `tests/integration/`, e.g. `my_feature_test.rs`.
-2. Declare it in `tests/integration/mod.rs`:
-   ```rust
-   pub mod my_feature_test;
-   ```
-3. Write `#[tokio::test]` functions — no extra setup required.
-Seeds populate:
-- `users` table with two default accounts (`admin`, `dev`)
-- `feature_flags` table with baseline flags (`new_dashboard`, `beta_api`)
+## 📄 License
+MIT — see [LICENSE](../LICENSE) for details.
+## Structure
+- `src/api/` – API handlers and routing
+- `src/config/` – Environment configuration
+- `src/db/` – Database utilities and seed data
+- `src/jobs/` – Background job definitions (Apalis)
+- `src/services/` – Business logic and external integrations
+- `src/telemetry/` – Observability and logging setup
 
-## Database Migrations (Backup Service)
+## Configuration
 
-The backup service runs inline DDL on startup to create the `backups` table
-if it does not already exist. No external migration tool is required.
-## Configuration Hot-Reload
+This application uses a layered configuration system. Base values and environment-specific tunings are compiled directly into the binary, ensuring safe fallbacks. Infrastructure secrets and dynamic overrides are provided securely at runtime via environment variables.
 
-The backend supports hot-reloading configuration from `config.json` without restarting the server.
+### Setting the Environment
+The application environment is controlled by the `APP_ENV` environment variable.
+Valid values: `development` (or `dev`), `staging` (or `stg`), `production` (or `prod`).
+If `APP_ENV` is omitted, the application safely defaults to `development` and emits a warning log.
 
-### Configuration Structure
+### Environment Variables
+
+| Variable | Type | Default | Required in Prod? | Description |
+|---|---|---|---|---|
+| `APP_ENV` | String | `development` | Yes | Defines the execution environment. |
+| `APP_SERVER__PORT` | Integer | (from TOML) | No | HTTP server listen port. |
+| `APP_SERVER__TLS__CERT_PATH` | String | None | Yes | Path to the TLS certificate chain. |
+| `APP_SERVER__TLS__KEY_PATH` | String | None | Yes | Path to the TLS private key. **(SENSITIVE)** |
+| `APP_DATABASE__URL` | String | None | Yes | PostgreSQL connection string. **(SENSITIVE)** |
+| `APP_DATABASE__MAX_CONNECTIONS`| Integer | (from TOML) | No | Maximum size of the database connection pool. |
+| `APP_REDIS__URL` | String | None | Yes | Redis connection string. **(SENSITIVE)** |
+| `APP_REDIS__JOB_QUEUE_URL` | String | Falls back to URL | No | Separate Redis instance for the job queue. **(SENSITIVE)** |
+| `APP_OBSERVABILITY__LOG_LEVEL` | String | (from TOML) | No | Logging verbosity (e.g., `info`, `warn`, `debug`). |
+
+### How to Add a New Configuration Field
+
+1. Add the field to the relevant struct in `backend/src/config/` (e.g., `ServerConfig` in `server.rs`).
+2. Add a sensible default value for it in `backend/src/config/defaults/default.toml`.
+3. If the value needs to differ by environment, override it in `development.toml`, `staging.toml`, or `production.toml`.
+4. If the field is an infrastructure secret, *do not* put it in the TOML files. Pass it at runtime via the corresponding environment variable (e.g., `APP_NEW_MODULE__SECRET_KEY`).
+5. (Optional) Add validation logic to `AppConfig::validate` in `backend/src/config/mod.rs` if the field has hard constraints.
+
+### 🔒 Security Note
+Certain configuration fields are sensitive and **must never be logged or committed to version control**. 
+These include:
+- `DatabaseConfig::url`
+- `RedisConfig::url`
+- `RedisConfig::job_queue_url`
+- `TlsConfig::key_path`
+
+These fields implement a custom `Debug` trait that automatically replaces their contents with `"[REDACTED]"` to prevent accidental leakage in application logs or panic traces. Additionally, they are marked to skip serialization.
+
+## Testing
+
+This project utilizes highly isolated, in-process integration testing leveraging Axum's `oneshot` capability.
+
+### Running Tests
+Execute the test suite natively using Cargo:
+```bash
+cargo test
+```
+
+### Environment Requirements
+Integration tests require a running PostgreSQL instance and Redis instance.
+- `TEST_DATABASE_URL`: (Default: `postgres://postgres:password@localhost/crucible_test`)
+- `TEST_REDIS_URL`: (Default: `redis://127.0.0.1/1`)
+
+### Test Database Isolation Strategy
+We utilize **Isolated Schemas** rather than database truncation or transactions. For every `#[tokio::test]` executed, the `TestContext` dynamically creates a completely isolated PostgreSQL schema (e.g. `test_a1b2c3d4...`) and maps the SQLx connection pool strictly to that `search_path`.
+- **Parallelization**: Tests never share state. They run fully concurrently.
+- **Safety**: No cross-test pollution. The schema is dropped entirely on `Drop`.
+
+### Writing a New Integration Test
+You can utilize the `ApiTestClient` located in `src/test_utils/client.rs`.
 
 ```rust
-pub struct AppConfig {
-    pub server: ServerConfig,
-    pub database: DatabaseConfig,
-    pub redis: RedisConfig,
-    pub log_level: String,
+use crate::test_utils::{setup, client::ApiTestClient};
+
+#[tokio::test]
+async fn test_create_resource() {
+    // 1. Spin up isolated context (DB, Redis, Router)
+    let ctx = setup().await;
+    let client = ApiTestClient::new(ctx.app);
+
+    // 2. Perform fluent API request
+    let payload = serde_json::json!({ "name": "Crucible" });
+    
+    let response = client.post("/api/resources")
+        .bearer("mock-token")
+        .json(&payload)
+        .send()
+        .await;
+
+    // 3. Chain assertions and extract typed body
+    response
+        .assert_status(StatusCode::CREATED)
+        .assert_json_field("name", "Crucible");
 }
 ```
 
-### Endpoints
-
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/config` | Retrieve current configuration (sanitized) |
-| `POST` | `/api/config/reload` | Trigger a reload from `config.json` |
-
-### Usage
-
-1. Create a `config.json` in the root directory.
-2. Update values in the file.
-3. Call `POST /api/config/reload` to apply changes.
-
-## Type-Safe API Contracts
-
-Crucible uses a typed contract system for all API endpoints to ensure consistency and reliability.
-
-### Standard Response Envelope
-
-All successful API responses follow the standard envelope:
-
-```json
-{
-  "status": "success",
-  "data": { ... }
-}
-```
-
-### Error Handling
-
-Errors return a standardized error object with HTTP status codes:
-
-```json
-{
-  "error": "Human readable error message",
-  "code": "ERROR_CODE_STRING",
-  "details": null
-}
-```
-
-### Validation
-
-The `ValidatedJson<T>` extractor automatically validates incoming requests using the `Validate` trait.
+### Adding New Fixture Helpers
+To add reusable database states, write standard async functions in `src/test_utils/fixtures.rs` that accept `&PgPool`. Because schemas are isolated, fixtures never need to worry about cleaning up after themselves.
 
 ```rust
 impl Validate for ProfileTriggerRequest {

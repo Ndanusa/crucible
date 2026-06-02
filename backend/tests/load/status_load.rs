@@ -6,8 +6,8 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 use backend::api::handlers::profiling::{get_system_status, AppState};
+use backend::config::{reload::ConfigManager, AppConfig};
 use backend::services::{error_recovery::ErrorManager, sys_metrics::MetricsExporter};
-use backend::config::{AppConfig, reload::ConfigManager};
 
 /// Build a test router with the status endpoint.
 fn build_app() -> Router {

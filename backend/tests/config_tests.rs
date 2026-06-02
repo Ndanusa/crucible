@@ -2,15 +2,15 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use backend::api::handlers::profiling::AppState;
+use backend::config::{
+    reload::{handle_get_config, handle_reload, ConfigManager},
+    AppConfig,
+};
+use backend::services::{error_recovery::ErrorManager, sys_metrics::MetricsExporter};
+use hyper::{Request, StatusCode};
 use std::sync::Arc;
 use tower::ServiceExt;
-use hyper::{Request, StatusCode};
-use backend::config::{AppConfig, reload::{ConfigManager, handle_reload, handle_get_config}};
-use backend::api::handlers::profiling::AppState;
-use backend::services::{
-    sys_metrics::MetricsExporter,
-    error_recovery::ErrorManager,
-};
 
 #[tokio::test]
 async fn test_config_get_endpoint() {
@@ -79,16 +79,16 @@ async fn test_config_reload_endpoint_no_file() {
 async fn test_config_manager_patch() {
     let config = AppConfig::default();
     let config_manager = ConfigManager::new(config);
-    
+
     let patch = serde_json::json!({
         "log_level": "debug",
         "server": {
             "port": 4000
         }
     });
-    
+
     config_manager.update_from_patch(patch).unwrap();
-    
+
     let updated = config_manager.load();
     assert_eq!(updated.log_level, "debug");
     assert_eq!(updated.server.port, 4000);

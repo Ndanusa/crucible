@@ -76,7 +76,7 @@ pub async fn get_metrics(
     let _metrics_enter = metrics_span.enter();
     let sys_metrics = state.metrics_exporter.get_metrics().await;
     drop(_metrics_enter);
-    
+
     let report = MetricsReport {
         uptime_secs: sys_metrics.uptime,
         memory_usage_bytes: sys_metrics.memory_usage,
@@ -186,7 +186,7 @@ pub async fn get_system_status(
     let _metrics_enter = metrics_span.enter();
     let metrics = state.metrics_exporter.get_metrics().await;
     drop(_metrics_enter);
-    
+
     let recovery_span = TracingService::service_method_span("ErrorManager", "get_active_tasks");
     let _recovery_enter = recovery_span.enter();
     let recovery_tasks = state.error_manager.get_active_tasks().await;
@@ -205,7 +205,7 @@ pub async fn get_system_status(
 pub async fn trigger_profile_collection(
     State(_state): State<Arc<AppState>>,
     ValidatedJson(payload): ValidatedJson<ProfileTriggerRequest>,
-) -> ApiResponse<ProfileTriggerResponse> {
+) -> Result<ApiResponse<ProfileTriggerResponse>, AppError> {
     // In a real implementation, this would trigger a CPU/Memory profile
     // using the provided payload (duration, sample rate, etc.)
     

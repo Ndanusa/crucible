@@ -24,6 +24,7 @@
 
 #![allow(dead_code)]
 
+use crate::services::tracing::TracingService;
 use chrono::{DateTime, Utc};
 use redis::{AsyncCommands, Client as RedisClient};
 use serde::{Deserialize, Serialize};
@@ -107,19 +108,21 @@ impl FeatureFlagService {
         // Try cache first with Redis tracing
         let redis_span = TracingService::redis_command_span("GET", Some(&cache_key));
         let _redis_enter = redis_span.enter();
-        
-        let mut conn = self.redis.get_multiplexed_async_connection().await
+
+        let mut conn = self
+            .redis
+            .get_multiplexed_async_connection()
+            .await
             .map_err(|e| {
                 TracingService::record_error(&redis_span, &e.to_string(), "redis_connection");
                 e
             })?;
-        
-        let cached: Option<String> = conn.get(&cache_key).await
-            .map_err(|e| {
-                TracingService::record_error(&redis_span, &e.to_string(), "redis_get");
-                e
-            })?;
-        
+
+        let cached: Option<String> = conn.get(&cache_key).await.map_err(|e| {
+            TracingService::record_error(&redis_span, &e.to_string(), "redis_get");
+            e
+        })?;
+
         drop(_redis_enter);
 
         if let Some(val) = cached {
@@ -133,21 +136,20 @@ impl FeatureFlagService {
         let db_span = TracingService::db_query_span(
             "SELECT enabled FROM feature_flags WHERE key = $1",
             "postgres",
-            "SELECT"
+            "SELECT",
         );
         let _db_enter = db_span.enter();
-        
-        let row: Option<(bool,)> = sqlx::query_as(
-            "SELECT enabled FROM feature_flags WHERE key = $1"
-        )
-        .bind(key)
-        .fetch_optional(&self.db)
-        .await
-        .map_err(|e| {
-            TracingService::record_error(&db_span, &e.to_string(), "database");
-            e
-        })?;
-        
+
+        let row: Option<(bool,)> =
+            sqlx::query_as("SELECT enabled FROM feature_flags WHERE key = $1")
+                .bind(key)
+                .fetch_optional(&self.db)
+                .await
+                .map_err(|e| {
+                    TracingService::record_error(&db_span, &e.to_string(), "database");
+                    e
+                })?;
+
         drop(_db_enter);
 
         match row {
@@ -155,14 +157,13 @@ impl FeatureFlagService {
                 // Populate cache with 5-minute TTL
                 let cache_set_span = TracingService::redis_command_span("SETEX", Some(&cache_key));
                 let _cache_set_enter = cache_set_span.enter();
-                
+
                 let val = if enabled { "1" } else { "0" };
-                let _: () = conn.set_ex(&cache_key, val, 300).await
-                    .map_err(|e| {
-                        TracingService::record_error(&cache_set_span, &e.to_string(), "redis_setex");
-                        e
-                    })?;
-                
+                let _: () = conn.set_ex(&cache_key, val, 300).await.map_err(|e| {
+                    TracingService::record_error(&cache_set_span, &e.to_string(), "redis_setex");
+                    e
+                })?;
+
                 drop(_cache_set_enter);
                 debug!(key = %key, enabled = enabled, "Cached feature flag");
                 Ok(enabled)
@@ -180,10 +181,10 @@ impl FeatureFlagService {
         let db_span = TracingService::db_query_span(
             "SELECT key, enabled, description, updated_at FROM feature_flags WHERE key = $1",
             "postgres",
-            "SELECT"
+            "SELECT",
         );
         let _db_enter = db_span.enter();
-        
+
         let row: Option<(String, bool, String, DateTime<Utc>)> = sqlx::query_as(
             "SELECT key, enabled, description, updated_at FROM feature_flags WHERE key = $1",
         )
@@ -194,7 +195,7 @@ impl FeatureFlagService {
             TracingService::record_error(&db_span, &e.to_string(), "database");
             e
         })?;
-        
+
         drop(_db_enter);
 
         match row {
@@ -214,10 +215,10 @@ impl FeatureFlagService {
         let db_span = TracingService::db_query_span(
             "SELECT key, enabled, description, updated_at FROM feature_flags ORDER BY key",
             "postgres",
-            "SELECT"
+            "SELECT",
         );
         let _db_enter = db_span.enter();
-        
+
         let rows: Vec<(String, bool, String, DateTime<Utc>)> = sqlx::query_as(
             "SELECT key, enabled, description, updated_at FROM feature_flags ORDER BY key",
         )
@@ -227,7 +228,7 @@ impl FeatureFlagService {
             TracingService::record_error(&db_span, &e.to_string(), "database");
             e
         })?;
-        
+
         db_span.record("db.rows_affected", rows.len() as i64);
         drop(_db_enter);
 
@@ -246,19 +247,14 @@ impl FeatureFlagService {
     ///
     /// This method upserts the flag in PostgreSQL and invalidates the cache.
     #[instrument(skip(self), fields(service.name = "FeatureFlagService", service.method = "set"))]
-    pub async fn set(
-        &self,
-        key: &str,
-        enabled: bool,
-        description: &str,
-    ) -> Result<(), FlagError> {
+    pub async fn set(&self, key: &str, enabled: bool, description: &str) -> Result<(), FlagError> {
         let db_span = TracingService::db_query_span(
             "INSERT INTO feature_flags ... ON CONFLICT DO UPDATE",
             "postgres",
-            "UPSERT"
+            "UPSERT",
         );
         let _db_enter = db_span.enter();
-        
+
         let result = sqlx::query(
             r#"
             INSERT INTO feature_flags (key, enabled, description, updated_at)
@@ -279,7 +275,7 @@ impl FeatureFlagService {
             TracingService::record_error(&db_span, &e.to_string(), "database");
             e
         })?;
-        
+
         db_span.record("db.rows_affected", result.rows_affected() as i64);
         drop(_db_enter);
 
@@ -299,10 +295,10 @@ impl FeatureFlagService {
         let db_span = TracingService::db_query_span(
             "DELETE FROM feature_flags WHERE key = $1",
             "postgres",
-            "DELETE"
+            "DELETE",
         );
         let _db_enter = db_span.enter();
-        
+
         let result = sqlx::query("DELETE FROM feature_flags WHERE key = $1")
             .bind(key)
             .execute(&self.db)
@@ -311,7 +307,7 @@ impl FeatureFlagService {
                 TracingService::record_error(&db_span, &e.to_string(), "database");
                 e
             })?;
-        
+
         db_span.record("db.rows_affected", result.rows_affected() as i64);
         drop(_db_enter);
 
@@ -328,24 +324,26 @@ impl FeatureFlagService {
     #[instrument(skip(self), fields(service.name = "FeatureFlagService", service.method = "invalidate_cache"))]
     async fn invalidate_cache(&self, key: &str) -> Result<(), FlagError> {
         let cache_key = format!("flag:{}", key);
-        
+
         let redis_span = TracingService::redis_command_span("DEL", Some(&cache_key));
         let _redis_enter = redis_span.enter();
-        
-        let mut conn = self.redis.get_multiplexed_async_connection().await
+
+        let mut conn = self
+            .redis
+            .get_multiplexed_async_connection()
+            .await
             .map_err(|e| {
                 TracingService::record_error(&redis_span, &e.to_string(), "redis_connection");
                 e
             })?;
-        
-        let deleted: i32 = conn.del(&cache_key).await
-            .map_err(|e| {
-                TracingService::record_error(&redis_span, &e.to_string(), "redis_del");
-                e
-            })?;
-        
+
+        let deleted: i32 = conn.del(&cache_key).await.map_err(|e| {
+            TracingService::record_error(&redis_span, &e.to_string(), "redis_del");
+            e
+        })?;
+
         drop(_redis_enter);
-        
+
         if deleted > 0 {
             debug!(key = %key, "Invalidated feature flag cache");
         } else {
@@ -361,13 +359,16 @@ impl FeatureFlagService {
     pub async fn flush_cache(&self) -> Result<usize, FlagError> {
         let keys_span = TracingService::redis_command_span("KEYS", Some("flag:*"));
         let _keys_enter = keys_span.enter();
-        
-        let mut conn = self.redis.get_multiplexed_async_connection().await
+
+        let mut conn = self
+            .redis
+            .get_multiplexed_async_connection()
+            .await
             .map_err(|e| {
                 TracingService::record_error(&keys_span, &e.to_string(), "redis_connection");
                 e
             })?;
-        
+
         let keys: Vec<String> = redis::cmd("KEYS")
             .arg("flag:*")
             .query_async(&mut conn)
@@ -376,7 +377,7 @@ impl FeatureFlagService {
                 TracingService::record_error(&keys_span, &e.to_string(), "redis_keys");
                 e
             })?;
-        
+
         drop(_keys_enter);
 
         if keys.is_empty() {
@@ -385,18 +386,17 @@ impl FeatureFlagService {
         }
 
         let count = keys.len();
-        
+
         let del_span = TracingService::redis_command_span("DEL", None);
         let _del_enter = del_span.enter();
-        
+
         for key in keys {
-            let _: () = conn.del(&key).await
-                .map_err(|e| {
-                    TracingService::record_error(&del_span, &e.to_string(), "redis_del");
-                    e
-                })?;
+            let _: () = conn.del(&key).await.map_err(|e| {
+                TracingService::record_error(&del_span, &e.to_string(), "redis_del");
+                e
+            })?;
         }
-        
+
         drop(_del_enter);
 
         info!(count = count, "Flushed feature flag cache");

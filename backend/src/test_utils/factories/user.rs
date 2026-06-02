@@ -61,7 +61,8 @@ impl User {
             id: Uuid::new_v4(),
             email: format!("user{}@example.com", Uuid::new_v4()),
             username: format!("user_{}", &Uuid::new_v4().to_string()[..8]),
-            password_hash: "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYqKx8p/v2S".to_string(),
+            password_hash: "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYqKx8p/v2S"
+                .to_string(),
             role: Role::default(),
             is_active: true,
             created_at: Utc::now(),
@@ -107,9 +108,7 @@ impl Default for UserFactory {
 impl UserFactory {
     /// Creates a new UserFactory with default values.
     pub fn new() -> Self {
-        Self {
-            user: User::new(),
-        }
+        Self { user: User::new() }
     }
 
     /// Creates a UserFactory from an existing User.
@@ -284,10 +283,7 @@ mod tests {
 
     #[test]
     fn test_build_user_helper() {
-        let user = build()
-            .email("helper@test.com")
-            .is_admin(true)
-            .finish();
+        let user = build().email("helper@test.com").is_admin(true).finish();
 
         assert_eq!(user.email, "helper@test.com");
         assert_eq!(user.role, Role::Admin);
@@ -326,7 +322,7 @@ mod tests {
     fn test_user_factory_all_options() {
         let id = Uuid::new_v4();
         let created_at = Utc::now();
-        
+
         let user = UserFactory::new()
             .id(id)
             .email("full@example.com")
@@ -364,7 +360,7 @@ mod tests {
     fn test_create_many() {
         let users = create_many(5);
         assert_eq!(users.len(), 5);
-        
+
         // All users should have unique IDs
         let ids: Vec<_> = users.iter().map(|u| u.id).collect();
         assert_eq!(ids.len(), 5);
@@ -375,7 +371,7 @@ mod tests {
         let users = create_many_with(3, |u, i| {
             u.email = format!("user{}@test.com", i);
         });
-        
+
         assert_eq!(users.len(), 3);
         assert_eq!(users[0].email, "user0@test.com");
         assert_eq!(users[1].email, "user1@test.com");
@@ -387,7 +383,7 @@ mod tests {
         let original = create();
         let factory = UserFactory::from_user(original.clone());
         let user = factory.email("modified@example.com").finish();
-        
+
         assert_eq!(user.id, original.id);
         assert_eq!(user.email, "modified@example.com");
     }
@@ -397,7 +393,7 @@ mod tests {
         let user = create();
         let json = serde_json::to_string(&user).unwrap();
         let parsed: User = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(user.id, parsed.id);
         assert_eq!(user.email, parsed.email);
     }

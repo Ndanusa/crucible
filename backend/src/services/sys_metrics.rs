@@ -5,12 +5,10 @@
 //! cache hit rates, and system resource usage. The service uses PostgreSQL for durability
 //! and Redis for high-performance caching.
 
-use sqlx::PgPool;
-use redis::{Client as RedisClient, AsyncCommands};
-use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 use tracing::{info, debug, warn, error, instrument};
 use thiserror::Error;
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use rust_decimal::Decimal;
 use std::sync::Arc;
@@ -230,8 +228,19 @@ impl BuildMetricsService {
 
         let metrics: Vec<BuildMetric> = rows
             .into_iter()
-            .map(|(id, project_name, build_id, status_str, compilation_time_ms,
-                   dependency_count, cache_hit_rate, cpu_usage, memory_usage_mb, build_timestamp)| {
+            .map(|row| {
+                use sqlx::Row;
+                let id: Uuid = row.get("id");
+                let project_name: String = row.get("project_name");
+                let build_id: String = row.get("build_id");
+                let status_str: String = row.get("build_status");
+                let compilation_time_ms: i64 = row.get("compilation_time_ms");
+                let dependency_count: i32 = row.get("dependency_count");
+                let cache_hit_rate: Option<Decimal> = row.get("cache_hit_rate");
+                let cpu_usage: Option<Decimal> = row.get("cpu_usage");
+                let memory_usage_mb: Option<i64> = row.get("memory_usage_mb");
+                let build_timestamp: DateTime<Utc> = row.get("build_timestamp");
+
                 BuildMetric {
                     id: Some(id),
                     project_name,
@@ -280,7 +289,13 @@ impl BuildMetricsService {
         .await?;
 
         match row {
-            Some((total_builds, successful_builds, failed_builds, avg_compilation_time, avg_cache_hit_rate)) => {
+            Some((
+                total_builds,
+                successful_builds,
+                failed_builds,
+                avg_compilation_time,
+                avg_cache_hit_rate,
+            )) => {
                 let success_rate = if total_builds > 0 {
                     Decimal::from(successful_builds) / Decimal::from(total_builds) * Decimal::from(100)
                 } else {
@@ -318,8 +333,19 @@ impl BuildMetricsService {
 
         Ok(rows
             .into_iter()
-            .map(|(id, project_name, build_id, status_str, compilation_time_ms,
-                   dependency_count, cache_hit_rate, cpu_usage, memory_usage_mb, build_timestamp)| {
+            .map(|row| {
+                use sqlx::Row;
+                let id: Uuid = row.get("id");
+                let project_name: String = row.get("project_name");
+                let build_id: String = row.get("build_id");
+                let status_str: String = row.get("build_status");
+                let compilation_time_ms: i64 = row.get("compilation_time_ms");
+                let dependency_count: i32 = row.get("dependency_count");
+                let cache_hit_rate: Option<Decimal> = row.get("cache_hit_rate");
+                let cpu_usage: Option<Decimal> = row.get("cpu_usage");
+                let memory_usage_mb: Option<i64> = row.get("memory_usage_mb");
+                let build_timestamp: DateTime<Utc> = row.get("build_timestamp");
+
                 BuildMetric {
                     id: Some(id),
                     project_name,
@@ -403,7 +429,7 @@ impl MetricsExporter {
     pub async fn update_metrics(&self, cpu: f64, mem: u64, uptime: u64) {
         let span = TracingService::service_method_span("MetricsExporter", "update_metrics");
         let _enter = span.enter();
-        
+
         let mut metrics = self.current_metrics.write().await;
         metrics.cpu_usage = cpu;
         metrics.memory_usage = mem;
@@ -412,19 +438,17 @@ impl MetricsExporter {
         info!(metrics = ?*metrics, "Updated system metrics");
     }
 
-    #[instrument(skip(self), fields(service.name = "MetricsExporter", service.method = "get_metrics"))]
     pub async fn get_metrics(&self) -> SystemMetrics {
         let span = TracingService::service_method_span("MetricsExporter", "get_metrics");
         let _enter = span.enter();
-        
+
         self.current_metrics.read().await.clone()
     }
 
-    #[instrument(skip(exporter), fields(service.name = "MetricsExporter", service.method = "run_collector"))]
     pub async fn run_collector(exporter: Arc<Self>) {
         let span = TracingService::service_method_span("MetricsExporter", "run_collector");
         let _enter = span.enter();
-        
+
         info!("Starting system metrics collector worker");
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
         let start_time = Utc::now();
@@ -455,8 +479,14 @@ mod tests {
         assert_eq!(BuildStatus::Cancelled.as_str(), "cancelled");
         assert_eq!(BuildStatus::Running.as_str(), "running");
 
-        assert_eq!(BuildStatus::from_str("success").unwrap(), BuildStatus::Success);
-        assert_eq!(BuildStatus::from_str("SUCCESS").unwrap(), BuildStatus::Success);
+        assert_eq!(
+            BuildStatus::from_str("success").unwrap(),
+            BuildStatus::Success
+        );
+        assert_eq!(
+            BuildStatus::from_str("SUCCESS").unwrap(),
+            BuildStatus::Success
+        );
         assert!(BuildStatus::from_str("invalid").is_err());
     }
 

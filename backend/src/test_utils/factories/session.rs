@@ -333,7 +333,7 @@ mod tests {
     fn test_session_record_use() {
         let mut session = create();
         assert_eq!(session.use_count, 0);
-        
+
         session.record_use();
         assert_eq!(session.use_count, 1);
         assert!(session.last_used_at > session.created_at);
@@ -353,7 +353,7 @@ mod tests {
     fn test_session_factory_all_options() {
         let user_id = Uuid::new_v4();
         let created_at = Utc::now();
-        
+
         let session = SessionFactory::new()
             .id(Uuid::new_v4())
             .user_id(user_id)
@@ -377,9 +377,7 @@ mod tests {
 
     #[test]
     fn test_session_factory_expires_in_hours() {
-        let session = SessionFactory::new()
-            .expires_in_hours(2)
-            .finish();
+        let session = SessionFactory::new().expires_in_hours(2).finish();
 
         let expected_expires = Utc::now() + Duration::hours(2);
         // Allow 1 second tolerance
@@ -392,7 +390,7 @@ mod tests {
             s.status = SessionStatus::Revoked;
             s.ip_address = Some("10.0.0.1".to_string());
         });
-        
+
         assert_eq!(session.status, SessionStatus::Revoked);
         assert_eq!(session.ip_address, Some("10.0.0.1".to_string()));
     }
@@ -407,7 +405,7 @@ mod tests {
     fn test_create_many_for_user() {
         let user_id = Uuid::new_v4();
         let sessions = create_many_for_user(user_id, 3);
-        
+
         assert_eq!(sessions.len(), 3);
         for session in sessions {
             assert_eq!(session.user_id, user_id);
@@ -419,7 +417,7 @@ mod tests {
         let session = create();
         let json = serde_json::to_string(&session).unwrap();
         let parsed: Session = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(session.id, parsed.id);
         assert_eq!(session.user_id, parsed.user_id);
     }

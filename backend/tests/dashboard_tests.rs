@@ -1,20 +1,24 @@
-use backend::api::handlers::dashboard::{DashboardState, get_dashboard_metrics, get_contract_stats};
 use axum::{
     body::Body,
-    extract::State,
     http::{Request, StatusCode},
     routing::get,
     Router,
 };
+use backend::api::handlers::dashboard::{
+    get_contract_stats, get_dashboard_metrics, DashboardState,
+};
+use backend::services::{
+    error_recovery::ErrorManager, log_alerts::AlertManager, sys_metrics::MetricsExporter,
+};
+use redis::Client as RedisClient;
+use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tower::ServiceExt;
-use sqlx::postgres::PgPoolOptions;
-use redis::aio::ConnectionManager;
 
 async fn setup_test_db() -> sqlx::PgPool {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://postgres:postgres@localhost/crucible_test".to_string());
-    
+
     let pool = PgPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
@@ -29,7 +33,7 @@ async fn setup_test_db() -> sqlx::PgPool {
             contract_id VARCHAR(255) UNIQUE NOT NULL,
             created_at TIMESTAMPTZ DEFAULT NOW()
         )
-        "#
+        "#,
     )
     .execute(&pool)
     .await
@@ -45,7 +49,7 @@ async fn setup_test_db() -> sqlx::PgPool {
             gas_cost DOUBLE PRECISION,
             created_at TIMESTAMPTZ DEFAULT NOW()
         )
-        "#
+        "#,
     )
     .execute(&pool)
     .await
@@ -54,21 +58,22 @@ async fn setup_test_db() -> sqlx::PgPool {
     pool
 }
 
-async fn setup_test_redis() -> ConnectionManager {
-    let redis_url = std::env::var("REDIS_URL")
-        .unwrap_or_else(|_| "redis://localhost:6379".to_string());
-    
-    let client = redis::Client::open(redis_url)
-        .expect("Failed to create Redis client");
-    
-    ConnectionManager::new(client)
-        .await
-        .expect("Failed to connect to Redis")
+async fn setup_test_redis() -> RedisClient {
+    let redis_url =
+        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+
+    RedisClient::open(redis_url).expect("Failed to create Redis client")
 }
 
 async fn cleanup_test_data(pool: &sqlx::PgPool) {
-    sqlx::query("DELETE FROM transactions").execute(pool).await.ok();
-    sqlx::query("DELETE FROM contracts").execute(pool).await.ok();
+    sqlx::query("DELETE FROM transactions")
+        .execute(pool)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM contracts")
+        .execute(pool)
+        .await
+        .ok();
 }
 
 #[tokio::test]
@@ -78,6 +83,9 @@ async fn test_get_dashboard_metrics_empty_database() {
     cleanup_test_data(&pool).await;
 
     let state = Arc::new(DashboardState {
+        metrics_exporter: Arc::new(MetricsExporter::new()),
+        error_manager: Arc::new(ErrorManager::new()),
+        alert_manager: Arc::new(AlertManager::new()),
         db: pool.clone(),
         redis_conn: redis.clone(),
         metrics_exporter: Arc::new(backend::services::sys_metrics::MetricsExporter::new()),
@@ -91,13 +99,20 @@ async fn test_get_dashboard_metrics_empty_database() {
         .with_state(state);
 
     let response = app
-        .oneshot(Request::builder().uri("/metrics").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let metrics: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(metrics["total_contracts"], 0);
@@ -122,13 +137,16 @@ async fn test_get_dashboard_metrics_with_data() {
         "INSERT INTO transactions (contract_id, status, processing_time_ms, gas_cost) 
          VALUES ('contract_1', 'success', 100.0, 1500.0),
                 ('contract_1', 'success', 150.0, 1600.0),
-                ('contract_2', 'failed', 200.0, 1700.0)"
+                ('contract_2', 'failed', 200.0, 1700.0)",
     )
     .execute(&pool)
     .await
     .unwrap();
 
     let state = Arc::new(DashboardState {
+        metrics_exporter: Arc::new(MetricsExporter::new()),
+        error_manager: Arc::new(ErrorManager::new()),
+        alert_manager: Arc::new(AlertManager::new()),
         db: pool.clone(),
         redis_conn: redis.clone(),
         metrics_exporter: Arc::new(backend::services::sys_metrics::MetricsExporter::new()),
@@ -142,13 +160,20 @@ async fn test_get_dashboard_metrics_with_data() {
         .with_state(state);
 
     let response = app
-        .oneshot(Request::builder().uri("/metrics").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let metrics: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(metrics["total_contracts"], 2);
@@ -165,6 +190,9 @@ async fn test_get_contract_stats_not_found() {
     cleanup_test_data(&pool).await;
 
     let state = Arc::new(DashboardState {
+        metrics_exporter: Arc::new(MetricsExporter::new()),
+        error_manager: Arc::new(ErrorManager::new()),
+        alert_manager: Arc::new(AlertManager::new()),
         db: pool.clone(),
         redis_conn: redis.clone(),
         metrics_exporter: Arc::new(backend::services::sys_metrics::MetricsExporter::new()),
@@ -182,7 +210,7 @@ async fn test_get_contract_stats_not_found() {
             Request::builder()
                 .uri("/contracts/nonexistent/stats")
                 .body(Body::empty())
-                .unwrap()
+                .unwrap(),
         )
         .await
         .unwrap();
@@ -207,13 +235,16 @@ async fn test_get_contract_stats_success() {
     sqlx::query(
         "INSERT INTO transactions (contract_id, status, processing_time_ms, gas_cost) 
          VALUES ('test_contract', 'success', 100.0, 1500.0),
-                ('test_contract', 'success', 150.0, 1600.0)"
+                ('test_contract', 'success', 150.0, 1600.0)",
     )
     .execute(&pool)
     .await
     .unwrap();
 
     let state = Arc::new(DashboardState {
+        metrics_exporter: Arc::new(MetricsExporter::new()),
+        error_manager: Arc::new(ErrorManager::new()),
+        alert_manager: Arc::new(AlertManager::new()),
         db: pool.clone(),
         redis_conn: redis.clone(),
         metrics_exporter: Arc::new(backend::services::sys_metrics::MetricsExporter::new()),
@@ -231,14 +262,16 @@ async fn test_get_contract_stats_success() {
             Request::builder()
                 .uri("/contracts/test_contract/stats")
                 .body(Body::empty())
-                .unwrap()
+                .unwrap(),
         )
         .await
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
 
-    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let stats: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
     assert_eq!(stats["contract_id"], "test_contract");
@@ -255,7 +288,11 @@ async fn test_redis_caching() {
     cleanup_test_data(&pool).await;
 
     // Clear cache
-    let mut conn = redis.clone();
+    let mut conn = redis
+        .clone()
+        .get_multiplexed_async_connection()
+        .await
+        .unwrap();
     let _: Result<(), _> = redis::cmd("DEL")
         .arg("dashboard:metrics")
         .query_async(&mut conn)
@@ -267,6 +304,9 @@ async fn test_redis_caching() {
         .unwrap();
 
     let state = Arc::new(DashboardState {
+        metrics_exporter: Arc::new(MetricsExporter::new()),
+        error_manager: Arc::new(ErrorManager::new()),
+        alert_manager: Arc::new(AlertManager::new()),
         db: pool.clone(),
         redis_conn: redis.clone(),
         metrics_exporter: Arc::new(backend::services::sys_metrics::MetricsExporter::new()),
@@ -282,7 +322,12 @@ async fn test_redis_caching() {
     // First request - should hit database
     let response1 = app
         .clone()
-        .oneshot(Request::builder().uri("/metrics").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 
@@ -290,7 +335,12 @@ async fn test_redis_caching() {
 
     // Second request - should hit cache
     let response2 = app
-        .oneshot(Request::builder().uri("/metrics").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 

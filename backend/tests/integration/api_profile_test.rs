@@ -45,7 +45,9 @@ async fn profile_body_contains_profile_id() {
         .await
         .unwrap();
 
-    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
     let json: serde_json::Value = serde_json::from_slice(&bytes).expect("response must be JSON");
 
     assert_eq!(json["status"], "success");
@@ -78,8 +80,12 @@ async fn profile_ids_are_unique_per_request() {
     let r1 = app.clone().oneshot(make_request()).await.unwrap();
     let r2 = app.oneshot(make_request()).await.unwrap();
 
-    let b1 = axum::body::to_bytes(r1.into_body(), usize::MAX).await.unwrap();
-    let b2 = axum::body::to_bytes(r2.into_body(), usize::MAX).await.unwrap();
+    let b1 = axum::body::to_bytes(r1.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let b2 = axum::body::to_bytes(r2.into_body(), usize::MAX)
+        .await
+        .unwrap();
 
     let j1: serde_json::Value = serde_json::from_slice(&b1).unwrap();
     let j2: serde_json::Value = serde_json::from_slice(&b2).unwrap();

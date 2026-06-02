@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use crate::services::tracing::TracingService;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
@@ -47,7 +48,7 @@ impl ErrorManager {
     pub async fn handle_error(&self, error: RecoveryError, task_name: &str) -> Result<(), RecoveryError> {
         let span = TracingService::service_method_span("ErrorManager", "handle_error");
         let _enter = span.enter();
-        
+
         warn!(task = %task_name, error = %error, "Handling error");
 
         let mut tasks = self.tasks.write().await;
@@ -55,7 +56,11 @@ impl ErrorManager {
             task.retries += 1;
             if task.retries > task.max_retries {
                 error!(task = %task_name, "Max retries reached");
-                TracingService::record_error(&span, &format!("Max retries reached for {}", task_name), "max_retries");
+                TracingService::record_error(
+                    &span,
+                    &format!("Max retries reached for {}", task_name),
+                    "max_retries",
+                );
                 return Err(RecoveryError::MaxRetriesReached(task_name.to_string()));
             }
             info!(task = %task_name, retry = task.retries, "Retrying task");
@@ -76,7 +81,7 @@ impl ErrorManager {
     pub async fn get_active_tasks(&self) -> Vec<RecoveryTask> {
         let span = TracingService::service_method_span("ErrorManager", "get_active_tasks");
         let _enter = span.enter();
-        
+
         self.tasks.read().await.clone()
     }
 }

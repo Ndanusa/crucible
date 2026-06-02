@@ -33,8 +33,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::{Deserialize, Serialize};
     use schemars::JsonSchema;
+    use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, JsonSchema)]
     struct TestStruct {
@@ -47,7 +47,10 @@ mod tests {
     fn test_generate_json_schema() {
         let schema = generate_json_schema::<TestStruct>();
         assert!(schema.is_object());
-        assert_eq!(schema["$schema"], "https://json-schema.org/draft/2020-12/schema");
+        assert_eq!(
+            schema["$schema"],
+            "https://json-schema.org/draft/2020-12/schema"
+        );
         assert_eq!(schema["type"], "object");
         assert!(schema["properties"].is_object());
         assert!(schema["properties"]["name"].is_object());

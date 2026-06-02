@@ -1,3 +1,4 @@
+use crate::api::handlers::profiling::AppState;
 use axum::{
     body::Body,
     extract::State,
@@ -7,16 +8,15 @@ use axum::{
 };
 use std::{sync::Arc, time::Instant};
 use tracing::{info_span, Instrument};
-use crate::api::handlers::profiling::AppState;
 
 /// Middleware to log HTTP requests and responses.
-/// 
+///
 /// This middleware captures:
 /// - Request method, URI, and HTTP version
 /// - Request headers (filtered for security)
 /// - Response status code
 /// - Processing latency
-/// 
+///
 /// It uses `tracing` for structured logging and integrates with the `LogAggregator` service.
 pub async fn logging_middleware(
     State(state): State<Arc<AppState>>,
@@ -57,7 +57,7 @@ pub async fn logging_middleware(
             "{} {} finished with {} in {:?}",
             method, uri, status, latency
         );
-        
+
         // We don't want to block the response on logging persistence
         let aggregator = state.log_aggregator.clone();
         tokio::spawn(async move {
@@ -75,19 +75,14 @@ pub async fn logging_middleware(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{
-        routing::get,
-        Router,
-    };
-    use tower::ServiceExt;
-    use hyper::StatusCode;
     use crate::services::{
-        sys_metrics::MetricsExporter,
-        error_recovery::ErrorManager,
-        log_aggregator::LogAggregator,
+        error_recovery::ErrorManager, log_aggregator::LogAggregator, sys_metrics::MetricsExporter,
     };
-    use sqlx::PgPool;
+    use axum::{routing::get, Router};
+    use hyper::StatusCode;
     use redis::Client as RedisClient;
+    use sqlx::PgPool;
+    use tower::ServiceExt;
 
     #[tokio::test]
     async fn test_logging_middleware_success() {
@@ -96,7 +91,7 @@ mod tests {
         let error_manager = Arc::new(ErrorManager::new());
         let (log_aggregator, _rx) = LogAggregator::new();
         let log_aggregator = Arc::new(log_aggregator);
-        
+
         // Use connect_lazy for testing to avoid needing a real DB
         let db = PgPool::connect_lazy("postgres://localhost/test").unwrap();
         let redis = RedisClient::open("redis://localhost").unwrap();
@@ -114,7 +109,10 @@ mod tests {
 
         let app = Router::new()
             .route("/", get(|| async { "OK" }))
-            .layer(axum::middleware::from_fn_with_state(state.clone(), logging_middleware))
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                logging_middleware,
+            ))
             .with_state(state);
 
         let response = app

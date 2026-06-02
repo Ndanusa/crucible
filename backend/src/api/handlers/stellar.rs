@@ -2,7 +2,7 @@ use axum::{
     http::{header, HeaderMap, StatusCode},
     response::IntoResponse,
 };
-use tracing::{info_span, info, instrument};
+use tracing::{info, info_span, instrument};
 
 /// Handler for the /.well-known/stellar.toml (SEP-1) file.
 /// This is essential for Stellar network identification and discovery.
@@ -10,9 +10,9 @@ use tracing::{info_span, info, instrument};
 pub async fn get_stellar_toml() -> impl IntoResponse {
     let span = info_span!("stellar.toml.fetch");
     let _enter = span.enter();
-    
+
     info!("Serving Stellar TOML for SEP-1 discovery");
-    
+
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, "text/plain".parse().unwrap());
     // Critical: SEP-1 requires CORS * for wallet discovery

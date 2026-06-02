@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use std::sync::Arc;
 use chrono::{DateTime, Duration, Utc};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
-use sqlx::PgPool;
+use sqlx::{PgPool, Row};
+use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info, instrument, warn};
 use uuid::Uuid;
@@ -17,6 +17,7 @@ use crate::error::AppError;
 pub struct BusinessMetric {
     pub id: Uuid,
     pub name: String,
+    #[schema(value_type = f64)]
     pub value: Decimal,
     pub unit: String,
     pub category: MetricCategory,
@@ -45,6 +46,28 @@ pub enum MetricSource {
     ExternalApi,
     #[default]
     Manual,
+}
+
+impl MetricSource {
+    pub fn as_str(&self) -> String {
+        match self {
+            Self::OnChain => "on_chain".to_string(),
+            Self::OffChain => "off_chain".to_string(),
+            Self::Database => "database".to_string(),
+            Self::ExternalApi => "external_api".to_string(),
+            Self::Manual => "manual".to_string(),
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "on_chain" => Self::OnChain,
+            "off_chain" => Self::OffChain,
+            "database" => Self::Database,
+            "external_api" => Self::ExternalApi,
+            _ => Self::Manual,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,9 +112,9 @@ impl BusinessMetricsService {
     #[instrument(skip_all, fields(metric_name))]
     pub async fn record_metric(
         &self,
-        name: impl Into<String>,
+        name: String,
         value: Decimal,
-        unit: impl Into<String>,
+        unit: String,
         category: MetricCategory,
         tags: HashMap<String, String>,
         source: MetricSource,
@@ -144,16 +167,7 @@ impl BusinessMetricsService {
             AppError::Database(e)
         })?;
 
-        let metric = BusinessMetric {
-            id,
-            name,
-            value,
-            unit,
-            category,
-            tags,
-            recorded_at: now,
-            source,
-        };
+        let metric = BusinessMetric::from_row(&row)?;
 
         // Update in-memory cache
         {
@@ -180,7 +194,14 @@ impl BusinessMetricsService {
     #[instrument(skip(self, metrics))]
     pub async fn record_metrics_batch(
         &self,
-        metrics: Vec<(String, Decimal, String, MetricCategory, HashMap<String, String>, MetricSource)>,
+        metrics: Vec<(
+            String,
+            Decimal,
+            String,
+            MetricCategory,
+            HashMap<String, String>,
+            MetricSource,
+        )>,
     ) -> Result<Vec<BusinessMetric>, AppError> {
         let mut tx = self.db.begin().await?;
         let mut results = Vec::with_capacity(metrics.len());
@@ -290,6 +311,11 @@ impl BusinessMetricsService {
             })
             .collect();
 
+        let mut metrics = Vec::with_capacity(rows.len());
+        for row in rows {
+            metrics.push(BusinessMetric::from_row(&row)?);
+        }
+
         Ok((metrics, total))
     }
 
@@ -343,15 +369,13 @@ impl BusinessMetricsService {
         .await
         .map_err(AppError::Database)?;
 
+        let result: Option<Decimal> = row.try_get("sum")?;
         Ok(result)
     }
 
     /// Get the latest value for a specific metric.
     #[instrument(skip(self))]
-    pub async fn get_latest_metric(
-        &self,
-        name: &str,
-    ) -> Result<Option<BusinessMetric>, AppError> {
+    pub async fn get_latest_metric(&self, name: &str) -> Result<Option<BusinessMetric>, AppError> {
         // Check cache first
         {
             let cache = self.cache.read().await;
@@ -381,7 +405,11 @@ impl BusinessMetricsService {
             BusinessMetric { id, name, value, unit, category, tags, recorded_at, source }
         });
 
-        Ok(metric)
+        if let Some(r) = row {
+            Ok(Some(BusinessMetric::from_row(&r)?))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Remove metrics older than the retention period.
@@ -439,6 +467,7 @@ pub struct MetricsState {
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct RecordMetricRequest {
     pub name: String,
+    #[schema(value_type = f64)]
     pub value: Decimal,
     pub unit: String,
     pub category: MetricCategory,
@@ -498,9 +527,9 @@ pub async fn query_metrics(
     State(state): State<Arc<MetricsState>>,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
 ) -> Result<Json<serde_json::Value>, AppError> {
-    let category = params.get("category").and_then(|c| {
-        serde_json::from_str(&format!("\"{}\"", c)).ok()
-    });
+    let category = params
+        .get("category")
+        .and_then(|c| serde_json::from_str(&format!("\"{}\"", c)).ok());
 
     let from = params
         .get("from")

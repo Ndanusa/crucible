@@ -8,6 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use serde::Serialize;
 use serde_json::json;
 use thiserror::Error;
 use tracing::error;
@@ -17,17 +18,21 @@ pub enum AppError {
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
 
+    /// 500 — An internal Redis error occurred.
     #[error("Redis error: {0}")]
     Redis(#[from] redis::RedisError),
 
+    /// 500 — A serialization error occurred.
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
     #[error("Internal server error: {0}")]
     Internal(String),
 
-    #[error("Not found: {0}")]
-    NotFound(String),
+    /// 502 — Stellar network communication failure.
+    #[error("Stellar operation failed: {0}")]
+    StellarError(String),
+}
 
     #[error("Validation error: {0}")]
     ValidationError(String),
@@ -35,11 +40,15 @@ pub enum AppError {
     #[error("Invalid request: {0}")]
     BadRequest(String),
 
-    #[error("Unauthorized")]
-    Unauthorized,
+    /// Wrap a Redis error.
+    pub fn redis(e: redis::RedisError) -> Self {
+        AppError::Redis(e)
+    }
 
-    #[error("Stellar operation failed: {0}")]
-    StellarError(String),
+    /// Wrap a serialization error.
+    pub fn serialization(e: serde_json::Error) -> Self {
+        AppError::Serialization(e)
+    }
 }
 
 impl IntoResponse for AppError {

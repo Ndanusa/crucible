@@ -3,19 +3,20 @@
 //! These tests require a running PostgreSQL instance and Redis instance.
 //! They can be run with: cargo test -p backend --test build_metrics_tests
 
-use backend::services::sys_metrics::{BuildMetricsService, BuildMetric, BuildStatus, MetricsError};
-use sqlx::{PgPool, postgres::PgPoolOptions};
-use redis::Client as RedisClient;
+use backend::services::sys_metrics::{BuildMetric, BuildMetricsService, BuildStatus, MetricsError};
 use chrono::Utc;
+use redis::Client as RedisClient;
 use rust_decimal_macros::dec;
+use sqlx::{postgres::PgPoolOptions, PgPool};
 use uuid::Uuid;
 
 async fn setup_test_db() -> PgPool {
     dotenvy::dotenv().ok();
-    
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://postgres:postgres@localhost:5432/crucible_test".to_string());
-    
+
+    let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+        "postgresql://postgres:postgres@localhost:5432/crucible_test".to_string()
+    });
+
     PgPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)
@@ -24,9 +25,9 @@ async fn setup_test_db() -> PgPool {
 }
 
 async fn setup_test_redis() -> RedisClient {
-    let redis_url = std::env::var("REDIS_URL")
-        .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-    
+    let redis_url =
+        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+
     RedisClient::open(redis_url).expect("Failed to create Redis client")
 }
 
@@ -66,9 +67,9 @@ async fn test_record_and_retrieve_build_metrics() {
     let pool = setup_test_db().await;
     let redis = setup_test_redis().await;
     run_migrations(&pool).await;
-    
+
     let service = BuildMetricsService::new(pool.clone(), redis);
-    
+
     // Record a build metric
     let metric = BuildMetric {
         id: None,
@@ -82,17 +83,20 @@ async fn test_record_and_retrieve_build_metrics() {
         memory_usage_mb: Some(1024),
         build_timestamp: Utc::now(),
     };
-    
+
     let id = service.record_build(metric.clone()).await.unwrap();
     assert!(id != Uuid::nil());
-    
+
     // Retrieve the metric
-    let metrics = service.get_project_metrics("test-project", 10).await.unwrap();
+    let metrics = service
+        .get_project_metrics("test-project", 10)
+        .await
+        .unwrap();
     assert_eq!(metrics.len(), 1);
     assert_eq!(metrics[0].project_name, "test-project");
     assert_eq!(metrics[0].build_id, "build-001");
     assert_eq!(metrics[0].build_status, BuildStatus::Success);
-    
+
     cleanup_test_db(&pool).await;
 }
 
@@ -102,16 +106,20 @@ async fn test_get_project_summary() {
     let pool = setup_test_db().await;
     let redis = setup_test_redis().await;
     run_migrations(&pool).await;
-    
+
     let service = BuildMetricsService::new(pool.clone(), redis);
-    
+
     // Record multiple builds
     for i in 0..10 {
         let metric = BuildMetric {
             id: None,
             project_name: "summary-project".to_string(),
             build_id: format!("build-{:03}", i),
-            build_status: if i < 8 { BuildStatus::Success } else { BuildStatus::Failed },
+            build_status: if i < 8 {
+                BuildStatus::Success
+            } else {
+                BuildStatus::Failed
+            },
             compilation_time_ms: 3000 + (i as i64 * 100),
             dependency_count: 40 + i,
             cache_hit_rate: Some(rust_decimal::Decimal::from(80 + i * 2)),
@@ -121,16 +129,19 @@ async fn test_get_project_summary() {
         };
         service.record_build(metric).await.unwrap();
     }
-    
+
     // Get summary
-    let summary = service.get_project_summary("summary-project").await.unwrap();
+    let summary = service
+        .get_project_summary("summary-project")
+        .await
+        .unwrap();
     assert_eq!(summary.project_name, "summary-project");
     assert_eq!(summary.total_builds, 10);
     assert_eq!(summary.successful_builds, 8);
     assert_eq!(summary.failed_builds, 2);
     assert!(summary.success_rate >= dec!(70) && summary.success_rate <= dec!(90));
     assert!(summary.avg_cache_hit_rate.is_some());
-    
+
     cleanup_test_db(&pool).await;
 }
 
@@ -140,9 +151,9 @@ async fn test_redis_caching() {
     let pool = setup_test_db().await;
     let redis = setup_test_redis().await;
     run_migrations(&pool).await;
-    
+
     let service = BuildMetricsService::new(pool.clone(), redis.clone());
-    
+
     // Record a metric
     let metric = BuildMetric {
         id: None,
@@ -157,16 +168,22 @@ async fn test_redis_caching() {
         build_timestamp: Utc::now(),
     };
     service.record_build(metric).await.unwrap();
-    
+
     // First call - cache miss
-    let metrics1 = service.get_project_metrics("cache-project", 10).await.unwrap();
+    let metrics1 = service
+        .get_project_metrics("cache-project", 10)
+        .await
+        .unwrap();
     assert_eq!(metrics1.len(), 1);
-    
+
     // Second call - should hit cache
-    let metrics2 = service.get_project_metrics("cache-project", 10).await.unwrap();
+    let metrics2 = service
+        .get_project_metrics("cache-project", 10)
+        .await
+        .unwrap();
     assert_eq!(metrics2.len(), 1);
     assert_eq!(metrics1[0].build_id, metrics2[0].build_id);
-    
+
     cleanup_test_db(&pool).await;
 }
 
@@ -176,9 +193,9 @@ async fn test_delete_project_metrics() {
     let pool = setup_test_db().await;
     let redis = setup_test_redis().await;
     run_migrations(&pool).await;
-    
+
     let service = BuildMetricsService::new(pool.clone(), redis);
-    
+
     // Record metrics
     for i in 0..5 {
         let metric = BuildMetric {
@@ -195,19 +212,28 @@ async fn test_delete_project_metrics() {
         };
         service.record_build(metric).await.unwrap();
     }
-    
+
     // Verify metrics exist
-    let metrics = service.get_project_metrics("delete-project", 10).await.unwrap();
+    let metrics = service
+        .get_project_metrics("delete-project", 10)
+        .await
+        .unwrap();
     assert_eq!(metrics.len(), 5);
-    
+
     // Delete metrics
-    let deleted = service.delete_project_metrics("delete-project").await.unwrap();
+    let deleted = service
+        .delete_project_metrics("delete-project")
+        .await
+        .unwrap();
     assert_eq!(deleted, 5);
-    
+
     // Verify metrics are gone
-    let metrics = service.get_project_metrics("delete-project", 10).await.unwrap();
+    let metrics = service
+        .get_project_metrics("delete-project", 10)
+        .await
+        .unwrap();
     assert_eq!(metrics.len(), 0);
-    
+
     cleanup_test_db(&pool).await;
 }
 
@@ -217,9 +243,9 @@ async fn test_get_recent_metrics() {
     let pool = setup_test_db().await;
     let redis = setup_test_redis().await;
     run_migrations(&pool).await;
-    
+
     let service = BuildMetricsService::new(pool.clone(), redis);
-    
+
     // Record metrics for different projects
     let projects = vec!["project-a", "project-b", "project-c"];
     for (i, project) in projects.iter().enumerate() {
@@ -237,11 +263,11 @@ async fn test_get_recent_metrics() {
         };
         service.record_build(metric).await.unwrap();
     }
-    
+
     // Get recent metrics
     let recent = service.get_recent_metrics(10).await.unwrap();
     assert_eq!(recent.len(), 3);
-    
+
     cleanup_test_db(&pool).await;
 }
 
@@ -251,16 +277,16 @@ async fn test_build_status_variations() {
     let pool = setup_test_db().await;
     let redis = setup_test_redis().await;
     run_migrations(&pool).await;
-    
+
     let service = BuildMetricsService::new(pool.clone(), redis);
-    
+
     let statuses = vec![
         BuildStatus::Success,
         BuildStatus::Failed,
         BuildStatus::Cancelled,
         BuildStatus::Running,
     ];
-    
+
     for (i, status) in statuses.iter().enumerate() {
         let metric = BuildMetric {
             id: None,
@@ -276,16 +302,19 @@ async fn test_build_status_variations() {
         };
         service.record_build(metric).await.unwrap();
     }
-    
+
     // Retrieve and verify all statuses
-    let metrics = service.get_project_metrics("status-project", 10).await.unwrap();
+    let metrics = service
+        .get_project_metrics("status-project", 10)
+        .await
+        .unwrap();
     assert_eq!(metrics.len(), 4);
-    
+
     let summary = service.get_project_summary("status-project").await.unwrap();
     assert_eq!(summary.total_builds, 4);
     assert_eq!(summary.successful_builds, 1);
     assert_eq!(summary.failed_builds, 1);
-    
+
     cleanup_test_db(&pool).await;
 }
 
@@ -295,9 +324,9 @@ async fn test_cache_invalidation_on_update() {
     let pool = setup_test_db().await;
     let redis = setup_test_redis().await;
     run_migrations(&pool).await;
-    
+
     let service = BuildMetricsService::new(pool.clone(), redis.clone());
-    
+
     // Record initial metric
     let metric = BuildMetric {
         id: None,
@@ -312,10 +341,13 @@ async fn test_cache_invalidation_on_update() {
         build_timestamp: Utc::now(),
     };
     service.record_build(metric).await.unwrap();
-    
+
     // Populate cache
-    let _ = service.get_project_metrics("invalidation-project", 10).await.unwrap();
-    
+    let _ = service
+        .get_project_metrics("invalidation-project", 10)
+        .await
+        .unwrap();
+
     // Add another metric (should invalidate cache)
     let metric2 = BuildMetric {
         id: None,
@@ -330,10 +362,13 @@ async fn test_cache_invalidation_on_update() {
         build_timestamp: Utc::now(),
     };
     service.record_build(metric2).await.unwrap();
-    
+
     // Should get updated data
-    let metrics = service.get_project_metrics("invalidation-project", 10).await.unwrap();
+    let metrics = service
+        .get_project_metrics("invalidation-project", 10)
+        .await
+        .unwrap();
     assert_eq!(metrics.len(), 2);
-    
+
     cleanup_test_db(&pool).await;
 }

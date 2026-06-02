@@ -1,0 +1,250 @@
+warning: profiles for the non root package will be ignored, specify profiles at the workspace root:
+package:   /home/edohwares/Desktop/Room/drips/crucible/backend/Cargo.toml
+workspace: /home/edohwares/Desktop/Room/drips/crucible/Cargo.toml
+    Checking backend v0.1.0 (/home/edohwares/Desktop/Room/drips/crucible/backend)
+error: expected `;`, found `Json`
+   --> backend/src/api/handlers/profiling.rs:208:7
+    |
+208 |     })
+    |       ^ help: add `;` here
+209 |     Json(serde_json::jso...
+    |     ---- unexpected token
+
+error[E0753]: expected outer doc comment
+   --> backend/src/config/reload.rs:182:1
+    |
+182 | //!
+    | ^^^
+    |
+    = note: inner doc comments like this (starting with `//!` or `/*!`) can only appear before items
+help: you might have meant to write a regular comment
+    |
+182 - //!
+182 + //
+    |
+
+error[E0753]: expected outer doc comment
+   --> backend/src/config/reload.rs:183:1
+    |
+183 | //! # Redis protocol
+    | ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: inner doc comments like this (starting with `//!` or `/*!`) can only appear before items
+help: you might have meant to write a regular comment
+    |
+183 - //! # Redis protocol
+183 + // # Redis protocol
+    |
+
+error[E0753]: expected outer doc comment
+   --> backend/src/config/reload.rs:184:1
+    |
+184 | //!
+    | ^^^
+    |
+    = note: inner doc comments like this (starting with `//!` or `/*!`) can only appear before items
+help: you might have meant to write a regular comment
+    |
+184 - //!
+184 + //
+    |
+
+error[E0753]: expected outer doc comment
+   --> backend/src/config/reload.rs:185:1
+    |
+185 | //!...igger a reload:
+    | ^^^...^^^^^^^^^^^^^^^
+    |
+    = note: inner doc comments like this (starting with `//!` or `/*!`) can only appear before items
+help: you might have meant to write a regular comment
+    |
+185 - //! Publish any non-empty string to `config:reload` to trigger a reload:
+185 + // Publish any non-empty string to `config:reload` to trigger a reload:
+    |
+
+error[E0753]: expected outer doc comment
+   --> backend/src/config/reload.rs:186:1
+    |
+186 | //!
+    | ^^^
+    |
+    = note: inner doc comments like this (starting with `//!` or `/*!`) can only appear before items
+help: you might have meant to write a regular comment
+    |
+186 - //!
+186 + //
+    |
+
+error[E0753]: expected outer doc comment
+   --> backend/src/config/reload.rs:187:1
+    |
+187 | //! ```text
+    | ^^^^^^^^^^^
+    |
+    = note: inner doc comments like this (starting with `//!` or `/*!`) can only appear before items
+help: you might have meant to write a regular comment
+    |
+187 - //! ```text
+187 + // ```text
+    |
+
+error[E0753]: expected outer doc comment
+   --> backend/src/config/reload.rs:188:1
+    |
+188 | //! PUBLISH config:reload ""
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: inner doc comments like this (starting with `//!` or `/*!`) can only appear before items
+help: you might have meant to write a regular comment
+    |
+188 - //! PUBLISH config:reload ""
+188 + // PUBLISH config:reload ""
+    |
+
+error[E0753]: expected outer doc comment
+   --> backend/src/config/reload.rs:189:1
+    |
+189 | //!...tions":50,...}'
+    | ^^^...^^^^^^^^^^^^^^^
+    |
+    = note: inner doc comments like this (starting with `//!` or `/*!`) can only appear before items
+help: you might have meant to write a regular comment
+    |
+189 - //! SET config:current '{"log_level":"info","max_connections":50,...}'
+189 + // SET config:current '{"log_level":"info","max_connections":50,...}'
+    |
+
+error[E0753]: expected outer doc comment
+   --> backend/src/config/reload.rs:190:1
+    |
+190 | //! PUBLISH config:reload "reload"
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: inner doc comments like this (starting with `//!` or `/*!`) can only appear before items
+help: you might have meant to write a regular comment
+    |
+190 - //! PUBLISH config:reload "reload"
+190 + // PUBLISH config:reload "reload"
+    |
+
+error[E0753]: expected outer doc comment
+   --> backend/src/config/reload.rs:191:1
+    |
+191 | //! ```
+    | ^^^^^^^
+    |
+    = note: inner doc comments like this (starting with `//!` or `/*!`) can only appear before items
+help: you might have meant to write a regular comment
+    |
+191 - //! ```
+191 + // ```
+    |
+
+error[E0753]: expected outer doc comment
+   --> backend/src/config/reload.rs:192:1
+    |
+192 | //!
+    | ^^^
+    |
+    = note: inner doc comments like this (starting with `//!` or `/*!`) can only appear before items
+help: you might have meant to write a regular comment
+    |
+192 - //!
+192 + //
+    |
+
+error[E0753]: expected outer doc comment
+   --> backend/src/config/reload.rs:193:1
+    |
+193 | //!...very message on
+    | ^^^...^^^^^^^^^^^^^^^
+    |
+    = note: inner doc comments like this (starting with `//!` or `/*!`) can only appear before items
+help: you might have meant to write a regular comment
+    |
+193 - //! The watcher reads `config:current` from Redis after every message on
+193 + // The watcher reads `config:current` from Redis after every message on
+    |
+
+error[E0753]: expected outer doc comment
+   --> backend/src/config/reload.rs:194:1
+    |
+194 | //!...existing config
+    | ^^^...^^^^^^^^^^^^^^^
+    |
+    = note: inner doc comments like this (starting with `//!` or `/*!`) can only appear before items
+help: you might have meant to write a regular comment
+    |
+194 - //! `config:reload`. If the key is absent or unparseable the existing config
+194 + // `config:reload`. If the key is absent or unparseable the existing config
+    |
+
+error[E0753]: expected outer doc comment
+   --> backend/src/config/reload.rs:195:1
+    |
+195 | //! is kept and an error is logged.
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+199 | use std::sync::Arc;
+    | ------------------- the inner doc comment doesn't annotate this `use` import
+    |
+help: to annotate the `use` import, change the doc comment from inner to outer style
+    |
+195 - //! is kept and an error is logged.
+195 + /// is kept and an error is logged.
+    |
+
+error: an inner attribute is not permitted following an outer doc comment
+   --> backend/src/config/reload.rs:197:1
+    |
+195 | //! is kept and an error is logged.
+    | ----------------------------------- previous doc comment
+196 |
+197 | #![allow(dead_code)]
+    | ^^^^^^^^^^^^^^^^^^^^ not permitted following an outer doc comment
+198 |
+199 | use std::sync::Arc;
+    | ------------------- the inner attribute doesn't annotate this `use` import
+    |
+    = note: inner attributes, like `#![no_std]`, annotate the item enclosing them, and are usually found at the beginning of source files
+help: to annotate the `use` import, change the attribute from inner to outer style
+    |
+197 - #![allow(dead_code)]
+197 + #[allow(dead_code)]
+    |
+
+error: mismatched closing delimiter: `}`
+   --> backend/src/error.rs:129:30
+    |
+119 | impl IntoResponse for AppError {
+    |                                - closing delimiter possibly meant for this
+...
+129 |         let body = Json(json!({
+    |                              ^ unclosed delimiter
+...
+177 | }
+    | ^ mismatched closing delimiter
+
+error: this file contains an unclosed delimiter
+   --> backend/src/error.rs:257:3
+    |
+ 15 | pub enum AppError {
+    |                   - unclosed delimiter
+...
+ 50 | pub enum AppError {
+    |                   - unclosed delimiter
+...
+119 | impl IntoResponse for AppError {
+    |                                - unclosed delimiter
+...
+129 |         let body = Json(json!({
+    |                               - this delimiter might not be properly closed...
+...
+176 |     }
+    |     - ...as it matches this but it has different indentation
+...
+257 | }
+    |  ^
+
+For more information about this error, try `rustc --explain E0753`.
+error: could not compile `backend` (lib) due to 18 previous errors

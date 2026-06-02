@@ -278,22 +278,119 @@ pub async fn get_dashboard(
     Ok(Json(data))
 }
 
+/// `GET /api/v1/dashboard/metrics` — return aggregate contract and pipeline metrics.
+#[tracing::instrument(skip(state))]
+pub async fn get_dashboard_metrics(
+    State(state): State<Arc<DashboardState>>,
+) -> Result<impl IntoResponse, DashboardError> {
+    match try_cache_get(&state.redis, "dashboard:metrics").await {
+        Ok(Some(cached)) => return Ok(Json(cached)),
+        Ok(None) => debug!("Dashboard metrics cache miss"),
+        Err(e) => {
+            warn!(error = %e, "Dashboard metrics cache read failed; falling back to live data")
+        }
+    }
+
+    let total_contracts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM contracts")
+        .fetch_one(&state.db)
+        .await?;
+    let total_transactions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transactions")
+        .fetch_one(&state.db)
+        .await?;
+    let avg_processing_time_ms: Option<f64> = sqlx::query_scalar(
+        "SELECT AVG(processing_time_ms) FROM transactions WHERE processing_time_ms IS NOT NULL",
+    )
+    .fetch_one(&state.db)
+    .await?;
+    let failed_transactions_24h: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM transactions WHERE status = 'failed' AND created_at >= NOW() - INTERVAL '24 hours'",
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let metrics = DashboardMetrics {
+        total_contracts: total_contracts as u64,
+        total_transactions: total_transactions as u64,
+        avg_processing_time_ms: avg_processing_time_ms.unwrap_or(0.0),
+        failed_transactions_24h: failed_transactions_24h as u64,
+        timestamp: Utc::now(),
+    };
+
+    if let Err(e) = try_cache_set(&state.redis, "dashboard:metrics", &metrics).await {
+        warn!(error = %e, "Failed to populate dashboard metrics cache");
+    }
+
+    Ok(Json(metrics))
+}
+
+/// `GET /api/v1/dashboard/contracts/:contract_id/stats` — return contract usage statistics.
+#[tracing::instrument(skip(state))]
+pub async fn get_contract_stats(
+    Path(contract_id): Path<String>,
+    State(state): State<Arc<DashboardState>>,
+) -> Result<impl IntoResponse, DashboardError> {
+    let cache_key = format!("dashboard:contract_stats:{contract_id}");
+
+    match try_cache_get(&state.redis, &cache_key).await {
+        Ok(Some(cached)) => return Ok(Json(cached)),
+        Ok(None) => debug!(contract_id = %contract_id, "Contract stats cache miss"),
+        Err(e) => {
+            warn!(error = %e, contract_id = %contract_id, "Contract stats cache read failed; falling back to live data")
+        }
+    }
+
+    let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM contracts WHERE contract_id = $1")
+        .bind(&contract_id)
+        .fetch_optional(&state.db)
+        .await?;
+
+    if exists.is_none() {
+        return Err(DashboardError::NotFound(format!(
+            "Contract {contract_id} not found"
+        )));
+    }
+
+    let (invocation_count, last_invoked, avg_gas_cost): (i64, Option<DateTime<Utc>>, Option<f64>) =
+        sqlx::query_as(
+            "SELECT COUNT(*), MAX(created_at), AVG(gas_cost) FROM transactions WHERE contract_id = $1",
+        )
+        .bind(&contract_id)
+        .fetch_one(&state.db)
+        .await?;
+
+    let stats = ContractStats {
+        contract_id,
+        invocation_count: invocation_count as u64,
+        last_invoked,
+        avg_gas_cost: avg_gas_cost.unwrap_or(0.0),
+    };
+
+    if let Err(e) = try_cache_set(&state.redis, &cache_key, &stats).await {
+        warn!(error = %e, contract_id = %stats.contract_id, "Failed to populate contract stats cache");
+    }
+
+    Ok(Json(stats))
+}
+
 // ---------------------------------------------------------------------------
 // Cache helpers
 // ---------------------------------------------------------------------------
 async fn try_cache_get(redis: &RedisClient) -> Result<Option<DashboardData>, DashboardError> {
     let mut conn = redis.get_multiplexed_async_connection().await?;
-    let raw: Option<String> = conn.get(CACHE_KEY).await?;
+    let raw: Option<String> = conn.get(key).await?;
     match raw {
         Some(s) => Ok(Some(serde_json::from_str(&s)?)),
         None => Ok(None),
     }
 }
 
-async fn try_cache_set(redis: &RedisClient, data: &DashboardData) -> Result<(), DashboardError> {
+async fn try_cache_set<T>(redis: &RedisClient, key: &str, data: &T) -> Result<(), DashboardError>
+where
+    T: Serialize,
+{
     let serialized = serde_json::to_string(data)?;
     let mut conn = redis.get_multiplexed_async_connection().await?;
-    let _: () = conn.set_ex(CACHE_KEY, serialized, CACHE_TTL_SECS).await?;
+    let _: () = conn.set_ex(key, serialized, CACHE_TTL_SECS).await?;
     Ok(())
 }
 
@@ -304,6 +401,7 @@ async fn try_cache_set(redis: &RedisClient, data: &DashboardData) -> Result<(), 
 mod tests {
     use super::*;
     use axum::{body::Body, http::Request, routing::get, Router};
+    use sqlx::postgres::PgPoolOptions;
     use tower::ServiceExt;
 
     fn make_state(db: PgPool, redis_conn: redis::aio::ConnectionManager) -> Arc<DashboardState> {

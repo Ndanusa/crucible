@@ -347,9 +347,7 @@ mod tests {
 
     #[test]
     fn test_product_factory_quantity_updates_availability() {
-        let product = ProductFactory::new()
-            .quantity(5)
-            .finish();
+        let product = ProductFactory::new().quantity(5).finish();
 
         assert_eq!(product.quantity, 5);
         assert_eq!(product.availability, Availability::LowStock);
@@ -403,7 +401,7 @@ mod tests {
             p.price_cents = 5000;
             p.category = ProductCategory::Books;
         });
-        
+
         assert_eq!(product.name, "Closure Product");
         assert_eq!(product.price_cents, 5000);
         assert_eq!(product.category, ProductCategory::Books);
@@ -421,7 +419,7 @@ mod tests {
             p.name = format!("Product {}", i);
             p.price_cents = 1000 * (i as i64 + 1);
         });
-        
+
         assert_eq!(products.len(), 3);
         assert_eq!(products[0].name, "Product 0");
         assert_eq!(products[0].price_cents, 1000);
@@ -432,7 +430,7 @@ mod tests {
         let product = create();
         let json = serde_json::to_string(&product).unwrap();
         let parsed: Product = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(product.id, parsed.id);
         assert_eq!(product.name, parsed.name);
     }

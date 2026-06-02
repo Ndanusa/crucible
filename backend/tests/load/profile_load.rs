@@ -6,8 +6,8 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 use backend::api::handlers::profiling::{trigger_profile_collection, AppState};
+use backend::config::{reload::ConfigManager, AppConfig};
 use backend::services::{error_recovery::ErrorManager, sys_metrics::MetricsExporter};
-use backend::config::{AppConfig, reload::ConfigManager};
 
 fn build_app() -> Router {
     let state = Arc::new(AppState {
@@ -34,11 +34,14 @@ async fn run_concurrent(n: usize) {
                             .method("POST")
                             .uri("/api/profile")
                             .header("content-type", "application/json")
-                            .body(axum::body::Body::from(serde_json::json!({
-                                "duration_secs": 10,
-                                "sample_rate_hz": 100,
-                                "label": "load-test"
-                            }).to_string()))
+                            .body(axum::body::Body::from(
+                                serde_json::json!({
+                                    "duration_secs": 10,
+                                    "sample_rate_hz": 100,
+                                    "label": "load-test"
+                                })
+                                .to_string(),
+                            ))
                             .unwrap(),
                     )
                     .await
@@ -79,11 +82,14 @@ async fn test_profile_unique_ids() {
                     .method("POST")
                     .uri("/api/profile")
                     .header("content-type", "application/json")
-                    .body(axum::body::Body::from(serde_json::json!({
-                        "duration_secs": 10,
-                        "sample_rate_hz": 100,
-                        "label": "load-test-id"
-                    }).to_string()))
+                    .body(axum::body::Body::from(
+                        serde_json::json!({
+                            "duration_secs": 10,
+                            "sample_rate_hz": 100,
+                            "label": "load-test-id"
+                        })
+                        .to_string(),
+                    ))
                     .unwrap(),
             )
             .await
@@ -91,7 +97,10 @@ async fn test_profile_unique_ids() {
 
         let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&bytes).expect("Valid JSON");
-        let id = json["data"]["profile_id"].as_str().expect("profile_id in data").to_string();
+        let id = json["data"]["profile_id"]
+            .as_str()
+            .expect("profile_id in data")
+            .to_string();
         ids.insert(id);
     }
 
@@ -111,11 +120,14 @@ async fn test_profile_response_shape() {
                 .method("POST")
                 .uri("/api/profile")
                 .header("content-type", "application/json")
-                .body(axum::body::Body::from(serde_json::json!({
-                    "duration_secs": 10,
-                    "sample_rate_hz": 100,
-                    "label": "load-test-shape"
-                }).to_string()))
+                .body(axum::body::Body::from(
+                    serde_json::json!({
+                        "duration_secs": 10,
+                        "sample_rate_hz": 100,
+                        "label": "load-test-shape"
+                    })
+                    .to_string(),
+                ))
                 .unwrap(),
         )
         .await

@@ -63,7 +63,12 @@ pub struct OrderItem {
 
 impl OrderItem {
     /// Creates a new order item.
-    pub fn new(product_id: Uuid, product_name: String, quantity: u32, unit_price_cents: i64) -> Self {
+    pub fn new(
+        product_id: Uuid,
+        product_name: String,
+        quantity: u32,
+        unit_price_cents: i64,
+    ) -> Self {
         Self {
             id: Uuid::new_v4(),
             product_id,
@@ -147,7 +152,9 @@ impl Order {
 
     /// Calculates the total from items.
     pub fn recalculate_total(&mut self) {
-        self.total_cents = self.items.iter()
+        self.total_cents = self
+            .items
+            .iter()
             .map(|item| item.unit_price_cents * item.quantity as i64)
             .sum();
     }
@@ -327,12 +334,7 @@ mod tests {
     use super::*;
 
     fn sample_order_item() -> OrderItem {
-        OrderItem::new(
-            Uuid::new_v4(),
-            "Test Product".to_string(),
-            2,
-            1999,
-        )
+        OrderItem::new(Uuid::new_v4(), "Test Product".to_string(), 2, 1999)
     }
 
     #[test]
@@ -368,10 +370,8 @@ mod tests {
             OrderItem::new(Uuid::new_v4(), "Product 1".to_string(), 1, 1000),
             OrderItem::new(Uuid::new_v4(), "Product 2".to_string(), 2, 500),
         ];
-        
-        let order = OrderFactory::new()
-            .items(items)
-            .finish();
+
+        let order = OrderFactory::new().items(items).finish();
 
         assert_eq!(order.items.len(), 2);
         assert_eq!(order.total_cents, 2000); // 1*1000 + 2*500
@@ -381,7 +381,7 @@ mod tests {
     fn test_order_add_item() {
         let mut order = Order::new();
         order.add_item(sample_order_item());
-        
+
         assert_eq!(order.items.len(), 1);
         assert_eq!(order.total_cents, 3998); // 2 * 1999
     }
@@ -394,7 +394,7 @@ mod tests {
             OrderItem::new(Uuid::new_v4(), "Product 2".to_string(), 2, 200),
         ];
         order.recalculate_total();
-        
+
         assert_eq!(order.total_cents, 700); // 3*100 + 2*200
     }
 
@@ -404,7 +404,7 @@ mod tests {
             o.status = OrderStatus::Cancelled;
             o.notes = Some("Cancelled by user".to_string());
         });
-        
+
         assert_eq!(order.status, OrderStatus::Cancelled);
         assert_eq!(order.notes, Some("Cancelled by user".to_string()));
     }
@@ -420,7 +420,7 @@ mod tests {
         let order = create();
         let json = serde_json::to_string(&order).unwrap();
         let parsed: Order = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(order.id, parsed.id);
         assert_eq!(order.total_cents, parsed.total_cents);
     }

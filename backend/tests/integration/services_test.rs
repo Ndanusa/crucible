@@ -114,7 +114,10 @@ async fn error_manager_tracks_independent_tasks() {
 #[tokio::test]
 async fn log_aggregator_sends_entry_to_receiver() {
     let (aggregator, mut rx) = LogAggregator::new();
-    aggregator.log("WARN", "disk almost full", "storage").await.unwrap();
+    aggregator
+        .log("WARN", "disk almost full", "storage")
+        .await
+        .unwrap();
 
     let entry = rx.recv().await.expect("expected a log entry");
     assert_eq!(entry.level, "WARN");
