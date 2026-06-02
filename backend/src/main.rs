@@ -6,6 +6,7 @@ use axum::{
     Router,
 };
 use backend::api::handlers::dashboard::{get_dashboard, DashboardState};
+use backend::api::handlers::ws::{ws_dashboard_handler, WsState};
 use backend::{
     api::handlers::{dashboard, errors, profiling, stellar},
     api::middleware::logging::logging_middleware,
@@ -120,12 +121,15 @@ async fn main() -> Result<(), anyhow::Error> {
     let dashboard_state = Arc::new(DashboardState {
         metrics_exporter,
         error_manager,
-        config_manager: config_manager.clone(),
         alert_manager,
-        log_aggregator,
-        redis: redis_client,
         db: db_pool,
-        redis_conn: redis_conn_dashboard, // Depending on what DashboardState actually expects
+        redis: redis_client.clone(),
+    });
+
+    // Create WebSocket state (shares Arc references from AppState)
+    let ws_state = Arc::new(WsState {
+        metrics_exporter: state.metrics_exporter.clone(),
+        error_manager: state.error_manager.clone(),
     });
 
     // OpenAPI docs
@@ -182,8 +186,49 @@ async fn main() -> Result<(), anyhow::Error> {
                 .with_state(dashboard_state),
         )
         .nest(
+            "/api/v1/contracts",
+            Router::new()
+                .route(
+                    "/compile",
+                    post(backend::api::handlers::contracts::compile_contract),
+                )
+                .route(
+                    "/analyze-dependencies",
+                    post(backend::api::handlers::contracts::analyze_dependencies),
+                )
+                .with_state(state.clone()),
+        )
+        .route(
+            "/api/v1/networks",
+            get(backend::api::handlers::contracts::get_networks),
+        )
+                .route("/compile", post(backend::api::handlers::contracts::compile_contract))
+                .route("/analyze-dependencies", post(backend::api::handlers::contracts::analyze_dependencies))
+                .route("/compliance-check", post(backend::api::handlers::contracts::check_compliance))
+                .route("/logs", post(backend::api::handlers::contracts::log_contract_call))
+                .route("/logs", get(backend::api::handlers::contracts::get_contract_logs))
+                .route("/templates", get(backend::api::handlers::contracts::get_templates))
+                .with_state(state.clone()),
+        )
+        .route(
+            "/api/v1/networks",
+            get(backend::api::handlers::contracts::get_networks),
+        )
+        .nest(
+            "/api/v1/admin",
+            Router::new()
+                .route("/system-stats", get(backend::api::handlers::admin::get_system_stats))
+                .route("/maintenance", post(backend::api::handlers::admin::set_maintenance_mode))
+                .route("/logs", get(backend::api::handlers::admin::get_admin_logs))
+                .with_state(state.clone()),
+        )
+        .nest(
             "/api/v1/errors",
             errors::error_analytics_routes(db_pool.clone(), redis_conn_dashboard.clone()),
+        )
+        .route(
+            "/api/v1/ws/dashboard",
+            get(ws_dashboard_handler).with_state(ws_state),
         )
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(middleware::from_fn_with_state(

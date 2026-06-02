@@ -4,7 +4,6 @@
 // Uses Axum for HTTP, SQLx for DB, Redis for caching, and tracing for observability.
 
 use crate::error::AppError;
-use crate::telemetry;
 use axum::{extract::State, response::IntoResponse, routing::get, Json, Router};
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
@@ -18,7 +17,7 @@ pub struct BuildErrorAnalytics {
     pub recent_errors: Vec<BuildErrorDetail>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct BuildErrorDetail {
     pub id: i64,
     pub error_type: String,
@@ -26,11 +25,18 @@ pub struct BuildErrorDetail {
     pub occurred_at: chrono::NaiveDateTime,
 }
 
-#[instrument(skip(pool, redis))]
+#[derive(Clone)]
+pub struct ErrorAnalyticsState {
+    pub pool: PgPool,
+    pub redis: redis::Client,
+}
+
+#[instrument(skip(state))]
 pub async fn get_build_error_analytics(
-    State(pool): State<PgPool>,
-    State(redis): State<redis::Client>,
+    State(state): State<ErrorAnalyticsState>,
 ) -> Result<impl IntoResponse, AppError> {
+    let pool = state.pool;
+    let redis = state.redis;
     // Try cache first
     let mut redis_conn = redis.get_async_connection().await.map_err(AppError::from)?;
     if let Ok(cached) = redis_conn.get::<_, String>("build_error_analytics").await {
@@ -49,11 +55,11 @@ pub async fn get_build_error_analytics(
     )
     .fetch_all(&pool)
     .await?;
-    let recent_errors = sqlx::query_as!(BuildErrorDetail,
-        "SELECT id, error_type, message, occurred_at FROM build_errors ORDER BY occurred_at DESC LIMIT 10"
+    let recent_errors = sqlx::query_as::<_, BuildErrorDetail>(
+        "SELECT id, error_type, message, occurred_at FROM build_errors ORDER BY occurred_at DESC LIMIT 10",
     )
-        .fetch_all(&pool)
-        .await?;
+    .fetch_all(&pool)
+    .await?;
 
     let analytics = BuildErrorAnalytics {
         total_errors: total_errors.0,
@@ -62,20 +68,21 @@ pub async fn get_build_error_analytics(
     };
 
     // Cache result
-    let _ = redis_conn
-        .set_ex(
+    let _: () = redis_conn
+        .set_ex::<_, _, ()>(
             "build_error_analytics",
             serde_json::to_string(&analytics).unwrap(),
             60,
         )
-        .await;
+        .await
+        .map_err(AppError::from)?;
 
     Ok(Json(analytics))
 }
 
 pub fn error_analytics_routes(pool: PgPool, redis: redis::Client) -> Router {
+    let state = ErrorAnalyticsState { pool, redis };
     Router::new()
         .route("/dashboard/build-errors", get(get_build_error_analytics))
-        .with_state(pool)
-        .with_state(redis)
+        .with_state(state)
 }

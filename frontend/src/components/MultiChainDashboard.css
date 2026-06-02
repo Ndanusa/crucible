@@ -1,0 +1,408 @@
+.multichain-container {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.multichain-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.multichain-header h2 {
+  margin: 0 0 4px 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.multichain-header p {
+  margin: 0;
+  font-size: 0.875rem;
+  color: #94a3b8;
+}
+
+.multichain-content {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 24px;
+}
+
+@media (max-width: 900px) {
+  .multichain-content {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.panel-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.add-network-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+  border: none;
+  color: #ffffff;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.add-network-trigger:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(6, 182, 212, 0.3);
+}
+
+.add-network-form {
+  padding: 16px;
+  border-radius: 12px;
+  margin-bottom: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.add-network-form h4 {
+  margin: 0 0 16px 0;
+  color: #f1f5f9;
+  font-size: 0.95rem;
+}
+
+.add-network-form .form-group {
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.add-network-form label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #94a3b8;
+}
+
+.add-network-form input {
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: #e2e8f0;
+  font-size: 0.85rem;
+  outline: none;
+  transition: border 0.2s;
+}
+
+.add-network-form input:focus {
+  border-color: #06b6d4;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.btn-cancel {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: background 0.2s;
+}
+
+.btn-cancel:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.btn-submit {
+  background: #06b6d4;
+  border: none;
+  color: white;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+
+.btn-submit:hover {
+  background: #0891b2;
+}
+
+.networks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.network-card {
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 16px;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.2s ease;
+}
+
+.network-card:hover {
+  background: rgba(15, 23, 42, 0.6);
+  border-color: rgba(255, 255, 255, 0.1);
+  transform: scale(1.01);
+}
+
+.network-card.active {
+  background: rgba(6, 182, 212, 0.08);
+  border-color: #06b6d4;
+  box-shadow: 0 0 15px rgba(6, 182, 212, 0.15);
+}
+
+.card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.net-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.net-name {
+  font-weight: 600;
+  color: #f8fafc;
+  font-size: 0.95rem;
+}
+
+.custom-badge {
+  background: rgba(139, 92, 246, 0.15);
+  color: #a78bfa;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.status-dot.online {
+  background-color: #10b981;
+  box-shadow: 0 0 8px #10b981;
+  animation: pulse-green 2s infinite;
+}
+
+.status-dot.offline {
+  background-color: #ef4444;
+  box-shadow: 0 0 8px #ef4444;
+}
+
+.status-text {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #94a3b8;
+  text-transform: capitalize;
+}
+
+.card-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
+.detail-icon {
+  flex-shrink: 0;
+}
+
+.detail-val {
+  color: #94a3b8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.delete-net-btn {
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  background: transparent;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.delete-net-btn:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* Active Network Details Column */
+.active-network-details {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.details-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding-bottom: 16px;
+}
+
+.details-header-icon {
+  color: #06b6d4;
+  width: 28px;
+  height: 28px;
+}
+
+.details-header h3 {
+  margin: 0 0 2px 0;
+  font-size: 1.1rem;
+  color: #f1f5f9;
+}
+
+.active-net-name {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #06b6d4;
+  font-weight: 600;
+}
+
+.network-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.meta-card {
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.meta-icon {
+  color: #38bdf8;
+}
+
+.meta-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.meta-label {
+  font-size: 0.65rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.meta-value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.config-block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.config-block h4 {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #f1f5f9;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.config-item {
+  background: rgba(15, 23, 42, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.config-label {
+  font-size: 0.7rem;
+  color: #64748b;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.config-value {
+  font-size: 0.8rem;
+  color: #cbd5e1;
+  word-break: break-all;
+  font-family: monospace;
+}
+
+.config-value.passphrase {
+  color: #e2e8f0;
+}
+
+@keyframes pulse-green {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
