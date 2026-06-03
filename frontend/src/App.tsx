@@ -12,6 +12,10 @@ type Tab = 'events' | 'tutorial' | 'metrics' | 'multichain' | 'abi' | 'compiler'
 import { Terminal, ShieldAlert, Cpu, Globe, Zap, Settings, RefreshCw, Activity, Layers, BookOpen } from 'lucide-react';
 
 type Tab = 'tutorial' | 'events' | 'simulator' | 'metrics' | 'multichain' | 'abi' | 'compiler' | 'dependencies';
+import { WalletConnector } from './components/WalletConnector';
+import { Terminal, ShieldAlert, Cpu, Globe, Zap, Settings, RefreshCw, BookOpen, Wallet } from 'lucide-react';
+
+type Tab = 'tutorial' | 'metrics' | 'multichain' | 'abi' | 'compiler' | 'dependencies' | 'wallet';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('tutorial');
@@ -163,6 +167,14 @@ function App() {
             <ShieldAlert size={15} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
             Dep Analyzer
           </button>
+          <button
+            className={`nav-tab-btn ${activeTab === 'wallet' ? 'active' : ''}`}
+            onClick={() => setActiveTab('wallet')}
+            data-testid="tab-wallet"
+          >
+            <Wallet size={15} />
+            Wallet
+          </button>
         </nav>
       </header>
       
@@ -174,6 +186,7 @@ function App() {
         {activeTab === 'metrics' && <GasCostEstimator />}
         {activeTab === 'multichain' && <MultiChainDashboard />}
         {activeTab === 'abi' && <ContractAbiExplorer />}
+        {activeTab === 'wallet' && <WalletConnector />}
         
         {activeTab === 'compiler' && (
           <div className="compiler-tab-panel container-panel">

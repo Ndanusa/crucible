@@ -10,6 +10,7 @@ use backend::api::handlers::dashboard::{get_dashboard, DashboardState, get_dashb
 use backend::{
     api::handlers::{profiling, stellar, dashboard},
     api::handlers::{dashboard, errors, profiling, sandbox, stellar},
+    api::handlers::{coverage::CoverageState, dashboard, errors, profiling, stellar},
     api::middleware::logging::logging_middleware,
     config::{Config, AppConfig, reload::{ConfigManager, handle_reload, handle_get_config}},
     jobs::{monitor_transaction, TransactionMonitorJob},
@@ -23,6 +24,8 @@ use backend::{
         sandbox::ContractSandboxService,
         sys_metrics::MetricsExporter,
         tracing::{TracingService, TracingConfig},
+        test_coverage::TestCoverageService,
+        tracing::{TracingConfig, TracingService},
     },
 };
 use backend::services::audit;
@@ -84,6 +87,11 @@ async fn main() -> Result<(), anyhow::Error> {
     drop(_db_enter);
 
     let redis_client = redis::Client::open(config.redis_url.clone())?;
+
+    // Coverage state (constructed early so it can be moved into the router)
+    let coverage_state = Arc::new(CoverageState {
+        service: TestCoverageService::new(db_pool.clone(), redis_client.clone()),
+    });
 
     // Initialize services
     let metrics_exporter = Arc::new(MetricsExporter::new());
@@ -285,6 +293,19 @@ async fn main() -> Result<(), anyhow::Error> {
             errors::error_analytics_routes(db_pool.clone(), redis_client.clone()),
         )
         .nest("/api/v1/sandbox", sandbox::routes(sandbox_service))
+        .nest(
+            "/api/v1/coverage",
+            Router::new()
+                .route(
+                    "/",
+                    post(backend::api::handlers::coverage::submit_coverage),
+                )
+                    "/:project",
+                    get(backend::api::handlers::coverage::get_latest_coverage),
+                )
+                .with_state(coverage_state),
+        )
+        .route(
             "/api/v1/ws/dashboard",
             get(ws_dashboard_handler).with_state(ws_state),
         )

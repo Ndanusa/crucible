@@ -1,5 +1,6 @@
 pub mod admin;
 pub mod contracts;
+pub mod coverage;
 pub mod dashboard;
 pub mod errors;
 pub mod health;
