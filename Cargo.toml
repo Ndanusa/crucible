@@ -12,6 +12,7 @@ members = [
     "examples/gasless",
     "examples/cross-contract",
     "examples/lending",
+    "examples/prediction-market",
 ]
 resolver = "2"
 

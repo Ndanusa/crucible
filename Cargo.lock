@@ -355,6 +355,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "crucible-example-prediction-market"
+version = "0.1.0"
+dependencies = [
+ "crucible",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "crucible-example-token"
 version = "0.1.0"
 dependencies = [
