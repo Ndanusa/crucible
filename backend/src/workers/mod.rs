@@ -4,3 +4,4 @@
 //! job processing, and other background task utilities.
 
 pub mod retry;
+pub mod priority;
