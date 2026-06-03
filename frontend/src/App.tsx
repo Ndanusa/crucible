@@ -1,12 +1,13 @@
 import { useState } from 'react';
+import { EventListenerDashboard } from './components/EventListenerDashboard';
 import { GasCostEstimator } from './components/GasCostEstimator';
 import { MultiChainDashboard } from './components/MultiChainDashboard';
 import { ContractAbiExplorer } from './components/ContractAbiExplorer';
 import { DeveloperOnboardingTutorial } from './components/DeveloperOnboardingTutorial';
-import { Terminal, ShieldAlert, Cpu, Globe, Zap, Settings, RefreshCw, BookOpen } from 'lucide-react';
+import { Terminal, ShieldAlert, Cpu, Globe, Zap, Settings, RefreshCw, BookOpen, Radio } from 'lucide-react';
 import './App.css';
 
-type Tab = 'tutorial' | 'metrics' | 'multichain' | 'abi' | 'compiler' | 'dependencies';
+type Tab = 'events' | 'tutorial' | 'metrics' | 'multichain' | 'abi' | 'compiler' | 'dependencies';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('tutorial');
@@ -75,6 +76,14 @@ function App() {
         </div>
         <nav className="tab-navigation">
           <button 
+            className={`nav-tab-btn ${activeTab === 'events' ? 'active' : ''}`}
+            onClick={() => setActiveTab('events')}
+            data-testid="tab-events"
+          >
+            <Radio size={15} />
+            Event Listener
+          </button>
+          <button 
             className={`nav-tab-btn ${activeTab === 'tutorial' ? 'active' : ''}`}
             onClick={() => setActiveTab('tutorial')}
             data-testid="tab-tutorial"
@@ -126,6 +135,7 @@ function App() {
       </header>
       
       <main className="app-main">
+        {activeTab === 'events' && <EventListenerDashboard />}
         {activeTab === 'tutorial' && <DeveloperOnboardingTutorial />}
         {activeTab === 'metrics' && <GasCostEstimator />}
         {activeTab === 'multichain' && <MultiChainDashboard />}

@@ -8,7 +8,9 @@
 .app-container {
   min-height: 100vh;
   width: 100%;
-  background: radial-gradient(circle at 10% 20%, #0f172a 0%, #020617 90%);
+  background:
+    linear-gradient(180deg, rgba(8, 13, 24, 0.94), rgba(4, 8, 15, 0.98)),
+    url('./assets/hero.png') center/cover fixed;
   display: flex;
   flex-direction: column;
 }
@@ -45,17 +47,17 @@
   font-size: 1.2rem;
   font-weight: 700;
   color: #f8fafc;
-  letter-spacing: -0.5px;
+  letter-spacing: 0;
 }
 
 .header-badge {
-  background: rgba(56, 189, 248, 0.1);
-  color: #38bdf8;
-  padding: 3px 10px;
+  background: rgba(94, 234, 212, 0.1);
+  color: #5eead4;
+  padding: 4px 12px;
   border-radius: 999px;
   font-size: 0.7rem;
   font-weight: 600;
-  border: 1px solid rgba(56, 189, 248, 0.2);
+  border: 1px solid rgba(94, 234, 212, 0.22);
 }
 
 /* Tab Navigation */
@@ -96,7 +98,7 @@
 
 .app-main {
   flex: 1;
-  padding: 32px;
+  padding: 34px 24px 48px;
   display: flex;
   justify-content: center;
   width: 100%;
@@ -408,4 +410,14 @@
 
 .dep-status.status-vulnerable {
   color: #f43f5e;
+}
+
+@media (max-width: 620px) {
+  .app-header {
+    padding: 18px 20px;
+  }
+
+  .app-main {
+    padding: 20px 14px 32px;
+  }
 }
