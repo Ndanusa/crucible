@@ -24,6 +24,23 @@ const CACHE_TTL_SECS: u64 = 30;
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
+//! Dashboard metrics handlers.
+//!
+//! Provides endpoints for aggregated contract and transaction metrics,
+//! with Redis caching to reduce database load.
+
+
+use axum::{
+    extract::{Path, State},
+    response::IntoResponse,
+    Json,
+};
+use redis::AsyncCommands;
+use serde::{Deserialize, Serialize};
+use tracing::{error, info, instrument};
+
+
+/// Shared application state for dashboard handlers.
 pub struct DashboardState {
     pub db: PgPool,
     pub redis_conn: redis::aio::ConnectionManager,
@@ -56,29 +73,22 @@ impl IntoResponse for DashboardError {
 // ---------------------------------------------------------------------------
 // Response types
 // ---------------------------------------------------------------------------
+/// Aggregated dashboard metrics.
 #[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
 pub struct DashboardMetrics {
-    /// Total number of active contracts
     pub total_contracts: i64,
-    /// Total number of transactions processed
     pub total_transactions: i64,
-    /// Average transaction processing time in milliseconds
     pub avg_processing_time_ms: f64,
-    /// Number of failed transactions in the last 24 hours
     pub failed_transactions_24h: i64,
-    /// Timestamp of the metrics snapshot
     pub timestamp: DateTime<Utc>,
 }
 
+/// Per-contract statistics.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ContractStats {
-    /// Contract identifier
     pub contract_id: String,
-    /// Number of invocations
     pub invocation_count: i64,
-    /// Last invocation timestamp
     pub last_invoked: Option<DateTime<Utc>>,
-    /// Average gas cost
     pub avg_gas_cost: f64,
 }
 
@@ -97,11 +107,12 @@ pub struct DashboardData {
 // ---------------------------------------------------------------------------
 
 /// Retrieves aggregated dashboard metrics with Redis caching
+/// `GET /api/v1/dashboard/metrics` — Aggregated dashboard metrics with Redis caching.
 #[utoipa::path(
     get,
     path = "/api/v1/dashboard/metrics",
     responses(
-        (status = 200, description = "Dashboard metrics retrieved successfully", body = DashboardMetrics),
+        (status = 200, description = "Dashboard metrics", body = DashboardMetrics),
         (status = 500, description = "Internal server error")
     ),
     tag = "dashboard"
@@ -117,37 +128,37 @@ pub async fn get_dashboard_metrics(
     let mut redis_conn = state.redis_conn.clone();
     
     if let Ok(cached) = redis_conn.get::<_, String>(cache_key).await {
+    const CACHE_KEY: &str = "dashboard:metrics";
+    let mut redis_conn = state.redis.clone();
+
+    // Try cache first.
+    if let Ok(cached) = redis_conn.get::<_, String>(CACHE_KEY).await {
         if let Ok(metrics) = serde_json::from_str::<DashboardMetrics>(&cached) {
             info!("Returning cached dashboard metrics");
             return Ok(Json(metrics));
         }
     }
 
-    // Fetch from database
-    let total_contracts = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM contracts"
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .unwrap_or(0);
+    let total_contracts = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM contracts")
+        .fetch_optional(&state.db)
+        .await?
+        .unwrap_or(0);
 
-    let total_transactions = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM transactions"
-    )
-    .fetch_optional(&state.db)
-    .await?
-    .unwrap_or(0);
+    let total_transactions = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM transactions")
+        .fetch_optional(&state.db)
+        .await?
+        .unwrap_or(0);
 
     let avg_processing_time = sqlx::query_scalar::<_, Option<f64>>(
-        "SELECT AVG(processing_time_ms) FROM transactions WHERE processing_time_ms IS NOT NULL"
+        "SELECT AVG(processing_time_ms) FROM transactions WHERE processing_time_ms IS NOT NULL",
     )
     .fetch_one(&state.db)
     .await?
     .unwrap_or(0.0);
 
     let failed_24h = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM transactions 
-         WHERE status = 'failed' AND created_at > NOW() - INTERVAL '24 hours'"
+        "SELECT COUNT(*) FROM transactions \
+         WHERE status = 'failed' AND created_at > NOW() - INTERVAL '24 hours'",
     )
     .fetch_optional(&state.db)
     .await?
@@ -161,9 +172,9 @@ pub async fn get_dashboard_metrics(
         timestamp: Utc::now(),
     };
 
-    // Cache for 60 seconds
+    // Cache for 60 seconds (best-effort).
     if let Ok(json) = serde_json::to_string(&metrics) {
-        let _: Result<(), _> = redis_conn.set_ex(cache_key, json, 60).await;
+        let _: Result<(), _> = redis_conn.set_ex(CACHE_KEY, json, 60).await;
     }
 
     info!(
@@ -175,15 +186,13 @@ pub async fn get_dashboard_metrics(
     Ok(Json(metrics))
 }
 
-/// Retrieves statistics for a specific contract
+/// `GET /api/v1/dashboard/contracts/:contract_id/stats` — Per-contract statistics.
 #[utoipa::path(
     get,
     path = "/api/v1/dashboard/contracts/{contract_id}/stats",
-    params(
-        ("contract_id" = String, Path, description = "Contract identifier")
-    ),
+    params(("contract_id" = String, Path, description = "Contract identifier")),
     responses(
-        (status = 200, description = "Contract statistics retrieved", body = ContractStats),
+        (status = 200, description = "Contract statistics", body = ContractStats),
         (status = 404, description = "Contract not found"),
         (status = 500, description = "Internal server error")
     ),
@@ -199,7 +208,6 @@ pub async fn get_contract_stats(
     let cache_key = format!("dashboard:contract:{}:stats", contract_id);
     let mut redis_conn = state.redis_conn.clone();
 
-    // Check cache
     if let Ok(cached) = redis_conn.get::<_, String>(&cache_key).await {
         if let Ok(stats) = serde_json::from_str::<ContractStats>(&cached) {
             return Ok(Json(stats));
@@ -211,6 +219,8 @@ pub async fn get_contract_stats(
         r#"
         SELECT
             COUNT(*) as invocation_count,
+    let result = sqlx::query!(
+            COUNT(*) as "invocation_count!",
             MAX(created_at) as last_invoked,
             AVG(gas_cost) as avg_gas_cost
         FROM transactions
@@ -230,11 +240,13 @@ pub async fn get_contract_stats(
         },
         _ => {
             error!(contract_id = %contract_id, "Contract not found");
-            return Err(AppError::NotFound(format!("Contract {} not found", contract_id)));
+            return Err(AppError::NotFound(format!(
+                "Contract {} not found",
+                contract_id
+            )));
         }
     };
 
-    // Cache for 30 seconds
     if let Ok(json) = serde_json::to_string(&stats) {
         let _: Result<(), _> = redis_conn.set_ex(&cache_key, json, 30).await;
     }
@@ -424,12 +436,10 @@ mod tests {
             failed_transactions_24h: 3,
             timestamp: Utc::now(),
         };
-
         let json = serde_json::to_string(&metrics).unwrap();
-        let deserialized: DashboardMetrics = serde_json::from_str(&json).unwrap();
-        
-        assert_eq!(deserialized.total_contracts, 100);
-        assert_eq!(deserialized.total_transactions, 5000);
+        let back: DashboardMetrics = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.total_contracts, 100);
+        assert_eq!(back.total_transactions, 5000);
     }
 
     #[test]
@@ -440,7 +450,6 @@ mod tests {
             last_invoked: Some(Utc::now()),
             avg_gas_cost: 1500.75,
         };
-
         let json = serde_json::to_string(&stats).unwrap();
         let deserialized: ContractStats = serde_json::from_str(&json).unwrap();
         
@@ -467,5 +476,8 @@ mod tests {
         let back: DashboardData = serde_json::from_str(&json).unwrap();
         assert_eq!(back.active_recovery_tasks.len(), 0);
         assert_eq!(back.active_alerts.len(), 0);
+        let back: ContractStats = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.contract_id, "test_contract_123");
+        assert_eq!(back.invocation_count, 42);
     }
 }

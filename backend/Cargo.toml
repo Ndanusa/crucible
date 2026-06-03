@@ -8,7 +8,7 @@ authors = ["Crucible Contributors"]
 publish = false
 
 [[bin]]
-name = "crucible-backend"
+name = "backend"
 path = "src/main.rs"
 
 [[bin]]
@@ -23,6 +23,11 @@ name = "performance"
 harness = false
 
 name = "dashboard_bench"
+[[bench]]
+harness = false
+
+[features]
+testutils = ["mockall"]
 
 [dependencies]
 # Web framework & HTTP
@@ -33,6 +38,7 @@ tower_governor = "0.4"
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 # Database (PostgreSQL via SQLx)
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "macros", "migrate", "rust_decimal"] }
@@ -53,6 +59,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 opentelemetry = { version = "0.24", features = ["trace", "metrics"] }
 opentelemetry-otlp = { version = "0.17", features = ["trace", "grpc-tonic"] }
 opentelemetry-semantic-conventions = "0.16"
+opentelemetry = { version = "0.24", features = ["trace"] }
 opentelemetry_sdk = { version = "0.24", features = ["trace", "rt-tokio"] }
 tracing-opentelemetry = "0.25"
 tonic = "0.12"
@@ -108,6 +115,8 @@ mockall = { version = "0.13", optional = true }
 utoipa = { version = "5.0", features = ["axum_extras", "chrono", "uuid", "decimal"] }
 utoipa-swagger-ui = { version = "8.0", features = ["axum"] }
 tower_governor = "0.4"
+uuid = { version = "1", features = ["v4", "serde"] }
+anyhow = "1"
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }

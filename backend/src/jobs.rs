@@ -12,6 +12,7 @@ pub struct TransactionMonitorJob {
 }
 
 /// Handler for monitoring Stellar transactions via Apalis.
+/// Handler for monitoring Stellar transactions.
 #[instrument(skip_all, fields(job.name = "monitor_transaction", job.id = %job.tx_hash))]
 pub async fn monitor_transaction(job: TransactionMonitorJob) {
     let span = TracingService::job_span("monitor_transaction", &job.tx_hash);

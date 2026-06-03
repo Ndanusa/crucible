@@ -38,6 +38,23 @@ use redis::Client as RedisClient;
 // ---------------------------------------------------------------------------
 
 /// Shared application state passed to profiling and status handlers.
+//! Profiling and health check handlers.
+
+
+use serde::{Deserialize, Serialize};
+use tracing::{info, instrument};
+
+use crate::{
+    config::reload::ConfigManager,
+    error::AppError,
+    services::{
+        error_recovery::ErrorManager,
+        log_aggregator::LogAggregator,
+        sys_metrics::MetricsExporter,
+    },
+};
+
+/// Shared application state passed to profiling and config handlers.
 pub struct AppState {
     /// Optional PostgreSQL connection pool (None in tests).
     pub db: Option<sqlx::PgPool>,
@@ -94,11 +111,18 @@ pub struct HealthResponse {
 /// `GET /api/v1/profiling/metrics` — retrieve detailed performance metrics.
 ///
 /// Optimized for consumption by monitoring tools like Grafana.
+/// Performance metrics snapshot.
+}
+
+/// Health check response.
+}
+
+/// `GET /api/v1/profiling/metrics` — Return performance metrics.
 #[utoipa::path(
     get,
     path = "/api/v1/profiling/metrics",
     responses(
-        (status = 200, description = "Performance metrics retrieved successfully", body = MetricsReport),
+        (status = 200, description = "Performance metrics", body = MetricsReport),
         (status = 500, description = "Internal server error")
     ),
     tag = "profiling"
@@ -119,6 +143,8 @@ pub async fn get_metrics(
     drop(_metrics_enter);
 
     let report = MetricsReport {
+#[instrument(skip_all)]
+    Ok(Json(MetricsReport {
         uptime_secs: sys_metrics.uptime,
         memory_usage_bytes: sys_metrics.memory_usage,
         active_requests: 12,
@@ -138,6 +164,10 @@ pub async fn get_metrics(
 /// `GET /api/v1/profiling/health` — system health check.
 ///
 /// Performs actual pings to downstream services.
+    }))
+}
+
+/// `GET /api/v1/profiling/health` — System health check.
 #[utoipa::path(
     get,
     path = "/api/v1/profiling/health",
@@ -168,7 +198,17 @@ pub async fn get_health(
         let healthy = sqlx::query("SELECT 1")
             .fetch_optional(db)
 #[instrument(skip_all, fields(http.method = "GET", http.route = "/api/v1/profiling/health"))]
+#[instrument(skip_all)]
     info!("Performing system health check");
+    let db_healthy = if let Some(ref pool) = state.db {
+        sqlx::query("SELECT 1")
+            .fetch_optional(pool)
+            .await
+            .map(|r| r.is_some())
+            .unwrap_or(false)
+    } else {
+        false
+    };
 
     let db_healthy = if let Some(ref pool) = state.db {
         let db_span = TracingService::db_query_span("SELECT 1", "postgres", "PING");
@@ -190,6 +230,7 @@ pub async fn get_health(
     };
 
     let response = HealthResponse {
+    Ok(Json(HealthResponse {
         status: if db_healthy { "healthy" } else { "degraded" }.to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         timestamp: Utc::now(),
@@ -217,6 +258,11 @@ pub async fn get_prometheus_metrics() -> impl IntoResponse {
 /// `GET /api/v1/profiling/prometheus` — Prometheus-compatible metrics.
 #[instrument(skip_all, fields(http.method = "GET", http.route = "/api/v1/profiling/prometheus"))]
     info!("Exporting Prometheus-format metrics");
+    }))
+}
+
+/// `GET /api/v1/profiling/prometheus` — Prometheus-format metrics.
+#[instrument(skip_all)]
     "# HELP backend_requests_total Total number of requests\n\
      # TYPE backend_requests_total counter\n\
      backend_requests_total 1024\n\
@@ -296,4 +342,21 @@ pub async fn trigger_profile_collection(
         estimated_completion: chrono::Utc::now()
             + chrono::Duration::seconds(payload.duration_secs as i64),
     })
+/// `GET /api/status` — System status summary.
+#[instrument(skip_all)]
+pub async fn get_system_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    Json(serde_json::json!({
+        "status": "healthy",
+        "uptime_secs": metrics.uptime,
+        "memory_used_bytes": metrics.memory_usage,
+        "active_recovery_tasks": recovery_tasks.len(),
+    }))
+}
+
+/// `POST /api/profile` — Trigger profile collection.
+) -> impl IntoResponse {
+    let profile_id = uuid::Uuid::new_v4().to_string();
+    info!(profile_id = %profile_id, "Profiling collection triggered");
+        "message": "Profiling collection triggered",
+        "profile_id": profile_id,
 }

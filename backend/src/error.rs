@@ -104,6 +104,12 @@ impl IntoResponse for AppError {
             AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized access".to_string()),
             AppError::RedisError(e) => {
                 error!("Redis error: {e:?}");
+                tracing::error!("Database error: {e:?}");
+                    "database_error",
+                    "An internal database error occurred".to_string(),
+                )
+            }
+                tracing::error!("Redis error: {e:?}");
                     "redis_error",
                     "An internal cache error occurred".to_string(),
                 )
@@ -116,6 +122,9 @@ impl IntoResponse for AppError {
             }
             AppError::InternalError(msg) => {
                 error!("Internal error: {msg}");
+                tracing::error!("Internal error: {msg}");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
                     "internal_error",
                     "An internal error occurred".to_string(),
                 )
@@ -142,5 +151,55 @@ impl IntoResponse for AppError {
         }));
 
         (status, body).into_response()
+                tracing::error!("Stellar error: {msg}");
+                    "stellar_error",
+                )
+            }
+        };
+
+        (
+            status,
+            Json(ErrorResponse {
+                code: code.to_string(),
+                message,
+            }),
+        )
+            .into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_not_found_display() {
+        let err = AppError::NotFound("Contract not found".into());
+        assert_eq!(err.to_string(), "Not found: Contract not found");
+    }
+
+    fn test_bad_request_display() {
+        let err = AppError::BadRequest("Invalid address format".into());
+        assert_eq!(err.to_string(), "Bad request: Invalid address format");
+    }
+
+    fn test_validation_error_display() {
+        let err = AppError::ValidationError("name is required".into());
+        assert_eq!(err.to_string(), "Validation error: name is required");
+    }
+
+    fn test_internal_error_display() {
+        let err = AppError::InternalError("unexpected state".into());
+        assert_eq!(err.to_string(), "Internal error: unexpected state");
+    }
+
+    fn test_error_response_serialization() {
+        let resp = ErrorResponse {
+            code: "not_found".into(),
+            message: "Resource not found".into(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"code\":\"not_found\""));
+        assert!(json.contains("\"message\":\"Resource not found\""));
     }
 }
