@@ -13,6 +13,36 @@ pub struct AppConfig {
     pub database: DatabaseConfig,
     pub redis: RedisConfig,
     pub log_level: String,
+//! CONFIG APPROACH: Option A — layered config crate
+//! Rationale: Using the `config` crate provides a robust, layered approach where environment-specific
+//! defaults are cleanly defined in TOML files, while sensitive secrets and infrastructure-specific
+//! overrides are passed securely via environment variables. This prevents environment variable sprawl,
+//! ensures typed nested structures, and makes local development frictionless without compromising
+//! production security.
+
+use std::str::FromStr;
+
+pub mod database;
+pub mod error;
+pub mod observability;
+pub mod redis;
+pub mod server;
+
+#[cfg(test)]
+mod tests;
+
+pub use database::DatabaseConfig;
+pub use error::ConfigError;
+pub use observability::ObservabilityConfig;
+pub use redis::RedisConfig;
+pub use server::ServerConfig;
+
+/// The execution environment of the application.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub enum Environment {
+    Development,
+    Staging,
+    Production,
 }
 
 impl FromStr for Environment {
@@ -144,6 +174,8 @@ impl Config {
     /// Loads configuration from environment variables.
     pub fn from_env() -> Result<Self, anyhow::Error> {
         dotenvy::dotenv().ok();
+    }
+}
 
         Ok(Config {
             database_url: env::var("DATABASE_URL")

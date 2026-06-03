@@ -422,4 +422,8 @@ mod tests {
         let e = ReloadError::NotFound;
         assert!(e.to_string().contains("not found"));
     }
+    let config = manager.load();
+    // Sensitive fields are already skipped or redacted by `serde(skip_serializing)` and custom `Debug`.
+    // In this case, `AppConfig` derives Serialize, and sensitive fields have `#[serde(skip_serializing)]`.
+    Json(config.as_ref().clone())
 }
