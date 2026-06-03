@@ -8,6 +8,7 @@ pub mod macros;
 pub mod prelude;
 pub mod sim;
 pub mod token;
+pub mod reputation;
 
 /// The `#[fixture]` attribute macro for defining reusable test setup structs.
 ///
