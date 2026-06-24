@@ -6,11 +6,9 @@ pub mod db;
 pub mod error;
 pub mod jobs;
 pub mod services;
-pub mod workers;
-pub mod config;
 pub mod telemetry;
-pub mod workers;
 pub mod utils;
+pub mod workers;
 
 #[cfg(any(test, feature = "testutils"))]
 pub mod test_utils;

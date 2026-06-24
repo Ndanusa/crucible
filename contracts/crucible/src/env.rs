@@ -385,6 +385,10 @@ impl MockEnv {
     }
 
     /// Simulate a contract call and return a dry-run result.
+    ///
+    /// Auth is globally bypassed only for the duration of the dry-run call.
+    /// After `simulate` returns the auth mock is cleared, so subsequent
+    /// operations require explicit auth setup and will not silently pass.
     pub fn simulate<F, T>(&self, f: F) -> SimulatedTx<T>
     where
         F: Fn() -> T + 'static,
@@ -393,13 +397,12 @@ impl MockEnv {
         let mut budget = self.inner.budget();
         budget.reset_default();
 
-        self.inner.mock_auths(&[]);
         self.inner.mock_all_auths();
-
         let result = f();
-
         let instructions = budget.cpu_instruction_cost();
         let auths = self.inner.auths().iter().map(|(a, _)| a.clone()).collect();
+        // Clear the global auth bypass so it does not leak into later operations.
+        self.inner.mock_auths(&[]);
 
         SimulatedTx::new(
             (instructions / 100) as i64,
