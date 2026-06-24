@@ -291,9 +291,11 @@ impl MockEnv {
             }
             let mut matches = true;
             for (i, filter_topic) in filter_topics.iter().enumerate() {
-                if format!("{:?}", filter_topic)
-                    != format!("{:?}", event_topics.get(i as u32).unwrap())
-                {
+                // Compare Soroban `Val` values directly instead of relying on
+                // Debug string formatting. This provides robust type-aware
+                // equality checking (symbols, addresses, integers, tuples, etc.).
+                let ev_topic = event_topics.get(i as u32).unwrap();
+                if filter_topic != ev_topic {
                     matches = false;
                     break;
                 }
@@ -526,6 +528,22 @@ impl MockEnvBuilder {
     {
         let contract_id = self.env.inner.register(C::default(), ());
         self.env.register_contract::<C>(contract_id);
+        self
+    }
+
+    /// Register a contract at a deterministic address.
+    ///
+    /// This allows tests to associate a contract type with a known `Address` so
+    /// that callers can look up the address deterministically via
+    /// `env.contract_id::<C>()`. Note: this registers the mapping in the
+    /// `MockEnv` but does not deploy the contract instance to the underlying
+    /// `soroban_sdk::Env`. Use `with_contract` if you need the instance to be
+    /// available for calls.
+    pub fn with_contract_at<C>(self, id: &Address) -> Self
+    where
+        C: soroban_sdk::testutils::ContractFunctionSet + Default + 'static,
+    {
+        self.env.register_contract::<C>(id.clone());
         self
     }
 
