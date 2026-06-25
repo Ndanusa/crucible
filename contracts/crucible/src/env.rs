@@ -118,6 +118,49 @@ pub struct MockEnv {
     track_costs: bool,
 }
 
+// Typed event wrapper to provide ergonomic access to event fields and typed data conversion.
+#[derive(Clone)]
+pub struct CapturedEvent {
+    env: Env,
+    pub contract: Address,
+    pub topics: SorobanVec<Val>,
+    pub data: Val,
+}
+
+impl std::fmt::Debug for CapturedEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CapturedEvent")
+            .field("contract", &self.contract)
+            .field("topics", &self.topics)
+            .field("data", &self.data)
+            .finish()
+    }
+}
+
+impl CapturedEvent {
+    /// Returns the contract address that emitted the event.
+    pub fn contract(&self) -> Address {
+        self.contract.clone()
+    }
+
+    /// Returns the raw topics as a SorobanVec<Val>.
+    pub fn topics(&self) -> SorobanVec<Val> {
+        self.topics.clone()
+    }
+
+    /// Returns the raw data value.
+    pub fn data_raw(&self) -> Val {
+        self.data.clone()
+    }
+
+    /// Convert the event data into a typed Rust value using Soroban's FromVal.
+    ///
+    /// Example: let amount: i128 = ev.data_as();
+    pub fn data_as<T: FromVal<Env, Val>>(&self) -> T {
+        T::from_val(&self.env, &self.data)
+    }
+}
+
 impl MockEnv {
     /// Returns the underlying `soroban_sdk::Env`.
     pub fn inner(&self) -> &Env {
@@ -258,9 +301,9 @@ impl MockEnv {
             }
             let mut matches = true;
             for (i, filter_topic) in filter_topics.iter().enumerate() {
-                if format!("{:?}", filter_topic)
-                    != format!("{:?}", event_topics.get(i as u32).unwrap())
-                {
+                let ev_topic = event_topics.get(i as u32).unwrap();
+                // Val doesn't implement PartialEq; compare raw bit payloads.
+                if filter_topic.get_payload() != ev_topic.get_payload() {
                     matches = false;
                     break;
                 }
@@ -273,6 +316,50 @@ impl MockEnv {
             }
         }
         matching
+    }
+
+    /// Returns events matching the given topics as typed CapturedEvent wrappers.
+    ///
+    /// This keeps the low-level `events_matching` available for advanced users but
+    /// provides an ergonomic path to convert event data into Rust types.
+    pub fn events_parsed<T>(&self, topics: T) -> std::vec::Vec<CapturedEvent>
+    where
+        T: IntoVal<Env, SorobanVec<Val>>,
+    {
+        let filter_topics: SorobanVec<Val> = topics.into_val(&self.inner);
+        let all_events = self.inner.events().all();
+        let mut parsed = Vec::new();
+
+        // We use the internal representation for filtering in this helper
+        use soroban_sdk::xdr::{self, ScAddress};
+        for event in all_events.events() {
+            let xdr::ContractEventBody::V0(body) = &event.body;
+            let event_topics: SorobanVec<Val> = body.topics.clone().into_val(&self.inner);
+            if event_topics.len() < filter_topics.len() {
+                continue;
+            }
+            let mut matches = true;
+            for (i, filter_topic) in filter_topics.iter().enumerate() {
+                if format!("{:?}", filter_topic)
+                    != format!("{:?}", event_topics.get(i as u32).unwrap())
+                {
+                    matches = false;
+                    break;
+                }
+            }
+            if matches {
+                let sc_addr = ScAddress::Contract(event.contract_id.as_ref().unwrap().clone());
+                let contract_id = Address::from_val(&self.inner, &sc_addr);
+                let data: Val = body.data.clone().into_val(&self.inner);
+                parsed.push(CapturedEvent {
+                    env: self.inner.clone(),
+                    contract: contract_id,
+                    topics: event_topics,
+                    data,
+                });
+            }
+        }
+        parsed
     }
 
     /// Set the XLM token address for the environment.
@@ -306,6 +393,10 @@ impl MockEnv {
     }
 
     /// Simulate a contract call and return a dry-run result.
+    ///
+    /// Auth is globally bypassed only for the duration of the dry-run call.
+    /// After `simulate` returns the auth mock is cleared, so subsequent
+    /// operations require explicit auth setup and will not silently pass.
     pub fn simulate<F, T>(&self, f: F) -> SimulatedTx<T>
     where
         F: Fn() -> T + 'static,
@@ -314,13 +405,12 @@ impl MockEnv {
         let mut budget = self.inner.budget();
         budget.reset_default();
 
-        self.inner.mock_auths(&[]);
         self.inner.mock_all_auths();
-
         let result = f();
-
         let instructions = budget.cpu_instruction_cost();
         let auths = self.inner.auths().iter().map(|(a, _)| a.clone()).collect();
+        // Clear the global auth bypass so it does not leak into later operations.
+        self.inner.mock_auths(&[]);
 
         SimulatedTx::new(
             (instructions / 100) as i64,
@@ -449,6 +539,22 @@ impl MockEnvBuilder {
     {
         let contract_id = self.env.inner.register(C::default(), ());
         self.env.register_contract::<C>(contract_id);
+        self
+    }
+
+    /// Register a contract at a deterministic address.
+    ///
+    /// This allows tests to associate a contract type with a known `Address` so
+    /// that callers can look up the address deterministically via
+    /// `env.contract_id::<C>()`. Note: this registers the mapping in the
+    /// `MockEnv` but does not deploy the contract instance to the underlying
+    /// `soroban_sdk::Env`. Use `with_contract` if you need the instance to be
+    /// available for calls.
+    pub fn with_contract_at<C>(self, id: &Address) -> Self
+    where
+        C: soroban_sdk::testutils::ContractFunctionSet + Default + 'static,
+    {
+        self.env.register_contract::<C>(id.clone());
         self
     }
 

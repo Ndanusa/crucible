@@ -5,12 +5,9 @@
 //! cache hit rates, and system resource usage. The service uses PostgreSQL for durability
 //! and Redis for high-performance caching.
 
-use chrono::{DateTime, Utc};
-use tracing::{info, debug, warn, error, instrument};
-//! System metrics and build metrics services.
-
 #![allow(dead_code)]
 
+use chrono::{DateTime, Utc};
 use redis::{AsyncCommands, Client as RedisClient};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -18,13 +15,8 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
-use tracing::{debug, info, instrument};
+use tracing::{debug, info, instrument, warn, error};
 use uuid::Uuid;
-use rust_decimal::Decimal;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use crate::services::tracing::TracingService;
-
 use crate::services::tracing::TracingService;
 
 // ---------------------------------------------------------------------------
@@ -174,7 +166,7 @@ impl BuildMetricsService {
         Ok(id)
     }
 
-    /// Get metrics for a specific project.
+        /// Get metrics for a specific project.
     pub async fn get_project_metrics(
         &self,
         project_name: &str,
@@ -192,23 +184,25 @@ impl BuildMetricsService {
         }
 
         debug!(project = %project_name, "Build metrics cache miss – querying database");
-        let rows: Vec<(Uuid, String, String, String, i64, i32, Option<Decimal>, Option<Decimal>, Option<i64>, DateTime<Utc>)> = sqlx::query_as(
         let rows: Vec<(
             Uuid,
             String,
+            String,
+            String,
             i64,
             i32,
-            Option<f64>,
+            Option<Decimal>,
+            Option<Decimal>,
             Option<i64>,
             DateTime<Utc>,
         )> = sqlx::query_as(
             r#"
             SELECT id, project_name, build_id, build_status, compilation_time_ms,
-                   dependency_count, cache_hit_rate::float8, cpu_usage::float8, memory_usage_mb, build_timestamp
+                   dependency_count, cache_hit_rate, cpu_usage, memory_usage_mb, build_timestamp
             FROM build_metrics
-            WHERE project_name = $1
+            WHERE project_name = 
             ORDER BY build_timestamp DESC
-            LIMIT $2
+            LIMIT 
             "#,
         )
         .bind(project_name)
@@ -218,24 +212,12 @@ impl BuildMetricsService {
 
         let metrics: Vec<BuildMetric> = rows
             .into_iter()
-            .map(|row| {
-                use sqlx::Row;
-                let id: Uuid = row.get("id");
-                let project_name: String = row.get("project_name");
-                let build_id: String = row.get("build_id");
-                let status_str: String = row.get("build_status");
-                let compilation_time_ms: i64 = row.get("compilation_time_ms");
-                let dependency_count: i32 = row.get("dependency_count");
-                let cache_hit_rate: Option<Decimal> = row.get("cache_hit_rate");
-                let cpu_usage: Option<Decimal> = row.get("cpu_usage");
-                let memory_usage_mb: Option<i64> = row.get("memory_usage_mb");
-                let build_timestamp: DateTime<Utc> = row.get("build_timestamp");
-
-                BuildMetric {
-                    id: Some(id),
+            .map(
+                |(
+                    id,
                     project_name,
                     build_id,
-                    build_status: BuildStatus::from_str(&status_str).unwrap_or(BuildStatus::Failed),
+                    status_str,
                     compilation_time_ms,
                     dependency_count,
                     cache_hit_rate,
@@ -250,8 +232,8 @@ impl BuildMetricsService {
                         .unwrap_or(BuildStatus::Failed),
                     compilation_time_ms,
                     dependency_count,
-                    cache_hit_rate: cache_hit_rate.map(Decimal::try_from).and_then(|r| r.ok()),
-                    cpu_usage: cpu_usage.map(Decimal::try_from).and_then(|r| r.ok()),
+                    cache_hit_rate,
+                    cpu_usage,
                     memory_usage_mb,
                     build_timestamp,
                 },
@@ -276,12 +258,12 @@ impl BuildMetricsService {
             r#"
             SELECT
                 COUNT(*) as total_builds,
-                SUM(CASE WHEN build_status = 'success' THEN 1 ELSE 0 END) as successful_builds,
-                SUM(CASE WHEN build_status = 'failed' THEN 1 ELSE 0 END) as failed_builds,
+                SUM(CASE WHEN build_status = 'success' THEN 1 ELSE 0 END)::int8 as successful_builds,
+                SUM(CASE WHEN build_status = 'failed' THEN 1 ELSE 0 END)::int8 as failed_builds,
                 AVG(compilation_time_ms)::float8 as avg_compilation_time,
                 AVG(cache_hit_rate)::float8 as avg_cache_hit_rate
             FROM build_metrics
-            WHERE project_name = $1
+            WHERE project_name = 
             "#,
         )
         .bind(project_name)
@@ -297,7 +279,6 @@ impl BuildMetricsService {
                 avg_cache_hit_rate,
             )) => {
                 let success_rate = if total_builds > 0 {
-                    Decimal::from(successful_builds) / Decimal::from(total_builds) * Decimal::from(100)
                     Decimal::from(successful_builds) / Decimal::from(total_builds)
                         * Decimal::from(100u32)
                 } else {
@@ -309,7 +290,6 @@ impl BuildMetricsService {
                     total_builds,
                     successful_builds,
                     failed_builds,
-                    avg_compilation_time_ms: avg_compilation_time.unwrap_or_else(|| Decimal::from(0)),
                     avg_compilation_time_ms: avg_compilation_time
                         .map(Decimal::try_from)
                         .and_then(|r| r.ok())
@@ -326,48 +306,38 @@ impl BuildMetricsService {
 
     /// Get recent build metrics across all projects.
     pub async fn get_recent_metrics(&self, limit: i64) -> Result<Vec<BuildMetric>, MetricsError> {
-        let rows: Vec<(Uuid, String, String, String, i64, i32, Option<Decimal>, Option<Decimal>, Option<i64>, DateTime<Utc>)> = sqlx::query_as(
         let rows: Vec<(
             Uuid,
             String,
+            String,
+            String,
             i64,
             i32,
-            Option<f64>,
+            Option<Decimal>,
+            Option<Decimal>,
             Option<i64>,
             DateTime<Utc>,
         )> = sqlx::query_as(
             r#"
             SELECT id, project_name, build_id, build_status, compilation_time_ms,
-                   dependency_count, cache_hit_rate::float8, cpu_usage::float8, memory_usage_mb, build_timestamp
+                   dependency_count, cache_hit_rate, cpu_usage, memory_usage_mb, build_timestamp
             FROM build_metrics
             ORDER BY build_timestamp DESC
-            LIMIT $1
+            LIMIT 
             "#,
         )
         .bind(limit)
         .fetch_all(&self.db)
         .await?;
 
-        Ok(rows
+        let metrics = rows
             .into_iter()
-            .map(|row| {
-                use sqlx::Row;
-                let id: Uuid = row.get("id");
-                let project_name: String = row.get("project_name");
-                let build_id: String = row.get("build_id");
-                let status_str: String = row.get("build_status");
-                let compilation_time_ms: i64 = row.get("compilation_time_ms");
-                let dependency_count: i32 = row.get("dependency_count");
-                let cache_hit_rate: Option<Decimal> = row.get("cache_hit_rate");
-                let cpu_usage: Option<Decimal> = row.get("cpu_usage");
-                let memory_usage_mb: Option<i64> = row.get("memory_usage_mb");
-                let build_timestamp: DateTime<Utc> = row.get("build_timestamp");
-
-                BuildMetric {
-                    id: Some(id),
+            .map(
+                |(
+                    id,
                     project_name,
                     build_id,
-                    build_status: BuildStatus::from_str(&status_str).unwrap_or(BuildStatus::Failed),
+                    status_str,
                     compilation_time_ms,
                     dependency_count,
                     cache_hit_rate,
@@ -382,8 +352,8 @@ impl BuildMetricsService {
                         .unwrap_or(BuildStatus::Failed),
                     compilation_time_ms,
                     dependency_count,
-                    cache_hit_rate: cache_hit_rate.map(Decimal::try_from).and_then(|r| r.ok()),
-                    cpu_usage: cpu_usage.map(Decimal::try_from).and_then(|r| r.ok()),
+                    cache_hit_rate,
+                    cpu_usage,
                     memory_usage_mb,
                     build_timestamp,
                 },
@@ -391,7 +361,7 @@ impl BuildMetricsService {
             .collect())
     }
 
-    /// Delete all metrics for a project.
+/// Delete all metrics for a project.
     pub async fn delete_project_metrics(&self, project_name: &str) -> Result<u64, MetricsError> {
         let result = sqlx::query("DELETE FROM build_metrics WHERE project_name = $1")
             .bind(project_name)
@@ -424,7 +394,7 @@ impl BuildMetricsService {
 
         if !keys.is_empty() {
             let key_count = keys.len();
-            for key in keys {
+            for key in &keys {
                 let _: () = conn.del(&key).await?;
             }
             debug!(project = %project_name, count = key_count, "Invalidated project cache");
@@ -438,16 +408,6 @@ impl BuildMetricsService {
 // ---------------------------------------------------------------------------
 // MetricsExporter
 // ---------------------------------------------------------------------------
-
-// SystemMetrics + MetricsExporter
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct SystemMetrics {
-    pub cpu_usage: f64,
-    pub memory_usage: u64,
-    pub uptime: u64,
-    pub timestamp: DateTime<Utc>,
-}
 
 pub struct MetricsExporter {
     current_metrics: Arc<RwLock<SystemMetrics>>,

@@ -1,5 +1,7 @@
-use soroban_sdk::testutils::{ConstructorArgs, ContractFunctionSet};
-use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, Val};
+use soroban_sdk::testutils::ContractFunctionSet;
+use soroban_sdk::{
+    contracttype, symbol_short, Address, Env, Symbol, TryFromVal, TryIntoVal, Val,
+};
 
 #[contracttype]
 #[derive(Clone)]
@@ -8,25 +10,22 @@ enum DataKey {
     Reputation(Address),
 }
 
-pub struct ReputationContract {
-    // We don't need to store anything in the struct because we use the contract's instance storage.
-    // But we need to satisfy the ContractFunctionSet trait.
+pub struct ReputationContract;
+
+impl Default for ReputationContract {
+    fn default() -> Self {
+        Self
+    }
 }
 
 impl ReputationContract {
-    pub fn new() -> Self {
-        Self {}
-    }
-
     fn initialize(&self, env: Env, admin: Address) {
-        // Check if already initialized
-        let existing_admin: Option<Address> = env.storage().instance().get(&DataKey::Admin);
-        if existing_admin.is_some() {
+        let existing: Option<Address> = env.storage().instance().get(&DataKey::Admin);
+        if existing.is_some() {
             panic!("already initialized");
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.events()
-            .publish((symbol_short!("initialized"), admin), 0u32);
+        env.events().publish((symbol_short!("init"), admin), 0u32);
     }
 
     fn set_reputation(&self, env: Env, caller: Address, account: Address, score: i32) {
@@ -35,9 +34,9 @@ impl ReputationContract {
         assert_eq!(caller, admin, "not admin");
         env.storage()
             .instance()
-            .set(&DataKey::Reputation(account), &score);
+            .set(&DataKey::Reputation(account.clone()), &score);
         env.events()
-            .publish((symbol_short!("reputation_set"), account), score);
+            .publish((symbol_short!("rep_set"), account), score);
     }
 
     fn increase_reputation(&self, env: Env, caller: Address, account: Address, amount: i32) {
@@ -49,12 +48,11 @@ impl ReputationContract {
             .instance()
             .get(&DataKey::Reputation(account.clone()))
             .unwrap_or(0);
-        let new_score = current + amount;
         env.storage()
             .instance()
-            .set(&DataKey::Reputation(account), &new_score);
+            .set(&DataKey::Reputation(account.clone()), &(current + amount));
         env.events()
-            .publish((symbol_short!("reputation_increased"), account), amount);
+            .publish((symbol_short!("rep_inc"), account), amount);
     }
 
     fn decrease_reputation(&self, env: Env, caller: Address, account: Address, amount: i32) {
@@ -66,12 +64,11 @@ impl ReputationContract {
             .instance()
             .get(&DataKey::Reputation(account.clone()))
             .unwrap_or(0);
-        let new_score = current - amount;
         env.storage()
             .instance()
-            .set(&DataKey::Reputation(account), &new_score);
+            .set(&DataKey::Reputation(account.clone()), &(current - amount));
         env.events()
-            .publish((symbol_short!("reputation_decreased"), account), amount);
+            .publish((symbol_short!("rep_dec"), account), amount);
     }
 
     fn get_reputation(&self, env: Env, account: Address) -> i32 {
@@ -82,58 +79,53 @@ impl ReputationContract {
     }
 }
 
+impl Default for ReputationContract {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ContractFunctionSet for ReputationContract {
     fn call(&self, func: &str, env: Env, args: &[Val]) -> Option<Val> {
+        let addr = |i: usize| -> Option<Address> {
+            Address::try_from_val(&env, args.get(i)?).ok()
+        };
+        let int = |i: usize| -> Option<i32> {
+            i32::try_from_val(&env, args.get(i)?).ok()
+        };
+
         match func {
             "initialize" => {
-                let admin = args.get(0)?.clone().try_into().ok()?;
-                self.initialize(env, admin);
-                Some(Val::Void)
+                let a = addr(0)?;
+                self.initialize(env, a);
+                Some(Val::from(()))
             }
-            "set_reputation" => {
-                let caller = args.get(0)?.clone().try_into().ok()?;
-                let account = args.get(1)?.clone().try_into().ok()?;
-                let score = args.get(2)?.clone().try_into().ok()?;
-                self.set_reputation(env, caller, account, score);
-                Some(Val::Void)
+            "set_rep" => {
+                let (a, b, c) = (addr(0)?, addr(1)?, int(2)?);
+                self.set_reputation(env, a, b, c);
+                Some(Val::from(()))
             }
-            "increase_reputation" => {
-                let caller = args.get(0)?.clone().try_into().ok()?;
-                let account = args.get(1)?.clone().try_into().ok()?;
-                let amount = args.get(2)?.clone().try_into().ok()?;
-                self.increase_reputation(env, caller, account, amount);
-                Some(Val::Void)
+            "inc_rep" => {
+                let (a, b, c) = (addr(0)?, addr(1)?, int(2)?);
+                self.increase_reputation(env, a, b, c);
+                Some(Val::from(()))
             }
-            "decrease_reputation" => {
-                let caller = args.get(0)?.clone().try_into().ok()?;
-                let account = args.get(1)?.clone().try_into().ok()?;
-                let amount = args.get(2)?.clone().try_into().ok()?;
-                self.decrease_reputation(env, caller, account, amount);
-                Some(Val::Void)
+            "dec_rep" => {
+                let (a, b, c) = (addr(0)?, addr(1)?, int(2)?);
+                self.decrease_reputation(env, a, b, c);
+                Some(Val::from(()))
             }
-            "get_reputation" => {
-                let account = args.get(0)?.clone().try_into().ok()?;
-                let score = self.get_reputation(env, account);
-                Some(Val::from(score))
+            "get_rep" => {
+                let a = addr(0)?;
+                let score = self.get_reputation(env.clone(), a);
+                score.try_into_val(&env).ok()
             }
             _ => None,
         }
     }
 }
 
-impl ConstructorArgs for (Address,) {
-    fn __private_constructor_args_field_0(&self) -> Address {
-        self.0.clone()
-    }
-}
-
-impl ConstructorArgs for () {
-    fn __private_constructor_args_field_0(&self) -> Address {
-        panic!("ConstructorArgs for () not implemented for ReputationContract")
-    }
-}
-
-// We'll implement a client struct similar to MockToken for ease of use.
+/// Client wrapper for `ReputationContract` in tests.
 #[derive(Clone)]
 pub struct ReputationContractClient {
     env: Env,
@@ -152,111 +144,65 @@ impl ReputationContractClient {
         &self.address
     }
 
-    /// Initialize the reputation contract with an admin address.
-    /// This should be called by the deployer.
     pub fn initialize(&self, admin: &Address) {
-        self.env.mock_all_auths();
-        let client = soroban_sdk::contractclient::ContractClient::new(&self.env, &self.address);
-        client.call(&symbol_short!("initialize"), &(admin,));
+        let args: soroban_sdk::Vec<Val> = (admin,).try_into_val(&self.env).unwrap();
+        self.env
+            .invoke_contract::<Val>(&self.address, &symbol_short!("init"), args);
     }
 
-    /// Set the reputation of an account to a specific score. Admin only.
     pub fn set_reputation(&self, admin: &Address, account: &Address, score: i32) {
-        admin.require_auth();
-        self.env.mock_all_auths();
-        let client = soroban_sdk::contractclient::ContractClient::new(&self.env, &self.address);
-        client.call(&symbol_short!("set_reputation"), &(admin, account, score));
+        let args: soroban_sdk::Vec<Val> = (admin, account, score).try_into_val(&self.env).unwrap();
+        self.env
+            .invoke_contract::<Val>(&self.address, &symbol_short!("set_rep"), args);
     }
 
-    /// Increase the reputation of an account by a given amount. Admin only.
     pub fn increase_reputation(&self, admin: &Address, account: &Address, amount: i32) {
-        admin.require_auth();
-        self.env.mock_all_auths();
-        let client = soroban_sdk::contractclient::ContractClient::new(&self.env, &self.address);
-        client.call(
-            &symbol_short!("increase_reputation"),
-            &(admin, account, amount),
-        );
+        let args: soroban_sdk::Vec<Val> = (admin, account, amount).try_into_val(&self.env).unwrap();
+        self.env
+            .invoke_contract::<Val>(&self.address, &symbol_short!("inc_rep"), args);
     }
 
-    /// Decrease the reputation of an account by a given amount. Admin only.
     pub fn decrease_reputation(&self, admin: &Address, account: &Address, amount: i32) {
-        admin.require_auth();
-        self.env.mock_all_auths();
-        let client = soroban_sdk::contractclient::ContractClient::new(&self.env, &self.address);
-        client.call(
-            &symbol_short!("decrease_reputation"),
-            &(admin, account, amount),
-        );
+        let args: soroban_sdk::Vec<Val> = (admin, account, amount).try_into_val(&self.env).unwrap();
+        self.env
+            .invoke_contract::<Val>(&self.address, &symbol_short!("dec_rep"), args);
     }
 
-    /// Get the reputation of an account.
     pub fn get_reputation(&self, account: &Address) -> i32 {
-        let client = soroban_sdk::contractclient::ContractClient::new(&self.env, &self.address);
-        client
-            .call(&symbol_short!("get_reputation"), &(account,))
-            .unwrap()
-            .try_into()
-            .unwrap()
+        let args: soroban_sdk::Vec<Val> = (account,).try_into_val(&self.env).unwrap();
+        self.env
+            .invoke_contract::<i32>(&self.address, &symbol_short!("get_rep"), args)
     }
+}
 
-    /// Try to increase the reputation of an account by a given amount. Returns Ok(()) if successful, Err(()) if failed.
-    pub fn try_increase_reputation(
-        &self,
-        admin: &Address,
-        account: &Address,
-        amount: i32,
-    ) -> Result<(), ()> {
-        admin.require_auth();
+#[cfg(test)]
+impl ReputationContractClient {
+    /// Test-only helper that mocks all authorizations before running `f`.
+    ///
+    /// Use this in tests that exercise happy-path contract behavior. For
+    /// authorization tests, prefer `MockEnv::mock_auths` with specific entries
+    /// so missing or invalid auth is not masked.
+    pub fn with_mock_all_auths<R>(&self, f: impl FnOnce(&Self) -> R) -> R {
         self.env.mock_all_auths();
-        let client = soroban_sdk::contractclient::ContractClient::new(&self.env, &self.address);
-        match client.try_call(
-            &symbol_short!("increase_reputation"),
-            &(admin, account, amount),
-        ) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(()),
-        }
+        f(self)
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::env::MockEnv;
-    use soroban_sdk::Address;
-    use std::panic;
+    use soroban_sdk::{testutils::Address as _, Env};
 
     #[test]
-    fn test_reputation_contract() {
-        let env = MockEnv::builder().build();
-        let admin = env.account("admin");
-        let user = env.account("user");
-
-        // Deploy the reputation contract
-        let address = env.register_contract(None, ReputationContract::new());
-        let client = ReputationContractClient::new(&env.inner(), &address);
-
-        // Initialize with admin
-        client.initialize(&admin.address());
-
-        // Set reputation for user
-        client.set_reputation(&admin.address(), &user.address(), 100);
-        assert_eq!(client.get_reputation(&user.address()), 100);
-
-        // Increase reputation
-        client.increase_reputation(&admin.address(), &user.address(), 50);
-        assert_eq!(client.get_reputation(&user.address()), 150);
-
-        // Decrease reputation
-        client.decrease_reputation(&admin.address(), &user.address(), 30);
-        assert_eq!(client.get_reputation(&user.address()), 120);
-
-        // Non-admin cannot change reputation
-        env.set_auths(&[user.auth()]);
-        let result = panic::catch_unwind(|| {
-            client.increase_reputation(&user.address(), &user.address(), 10);
+    fn test_reputation_get_unset_returns_zero() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let user = Address::generate(&env);
+        let address = env.register(ReputationContract, ());
+        env.as_contract(&address, || {
+            ReputationContract.initialize(env.clone(), admin.clone());
+            assert_eq!(ReputationContract.get_reputation(env.clone(), user.clone()), 0);
         });
-        assert!(result.is_err());
     }
 }

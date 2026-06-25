@@ -42,19 +42,19 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json", "macros", "migrate", "rust_decimal"] }
 
 # Redis
-redis = { version = "0.27", features = ["tokio-comp", "connection-manager", "json"] }
+redis = { version = "1.2", features = ["tokio-comp", "connection-manager", "json"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-schemars = "0.8"
+schemars = "1.2"
 
 # Observability / Telemetry
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 opentelemetry = { version = "0.31", features = ["trace"] }
 opentelemetry_sdk = { version = "0.31", features = ["trace", "rt-tokio"] }
-opentelemetry-otlp = { version = "0.31", default-features = false, features = ["trace", "http-proto", "reqwest-client"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto", "reqwest-client"] }
 tracing-opentelemetry = { version = "0.32", default-features = false }
 opentelemetry-semantic-conventions = "0.16"
 tonic = "0.14"
@@ -70,6 +70,7 @@ rust_decimal = { version = "1.35", features = ["serde", "db-postgres"] }
 rust_decimal_macros = "1.35"
 arc-swap = "1.7"
 stellar-xdr = { version = "21.0", features = ["std"] }
+soroban-sdk = { workspace = true }
 base64 = "0.22"
 validator = { version = "0.19", features = ["derive"] }
 async-trait = "0.1"
@@ -89,6 +90,8 @@ cron = "0.12"
 
 # Optional mock support for tests
 mockall = { version = "0.13", optional = true }
+sha2 = "0.11.0"
+regex = "1.12.4"
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json"] }

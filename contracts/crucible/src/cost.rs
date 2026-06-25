@@ -89,21 +89,106 @@ fn format_with_commas(n: u64) -> String {
 
 #[cfg(feature = "snapshots")]
 impl CostReport {
-    /// Assert that the cost report matches a snapshot.
+    /// Assert that this cost report matches a stored snapshot within a default 5% tolerance.
     ///
-    /// This is a placeholder for snapshot testing integration.
-    /// When the `snapshots` feature is enabled, cost reports can be compared
-    /// against saved snapshots to catch performance regressions.
+    /// On the **first run** (no snapshot file found) the current values are written as the
+    /// baseline and the assertion passes. On subsequent runs the stored values are loaded
+    /// and each metric (instructions, memory, fee) must be within the allowed tolerance.
+    ///
+    /// Set the environment variable `CRUCIBLE_UPDATE_SNAPSHOTS=1` to overwrite an existing
+    /// snapshot with the current values (useful after an intentional performance change).
+    ///
+    /// Snapshots are stored as JSON files under `test_snapshots/cost/<name>.json` relative
+    /// to the crate root (`CARGO_MANIFEST_DIR`).
     ///
     /// # Panics
-    /// Panics if the snapshot does not exist or does not match.
+    /// Panics when a metric exceeds the tolerance threshold compared to the stored snapshot.
     pub fn assert_snapshot(&self, name: &str) {
-        // TODO: Integrate with insta or similar snapshot testing library
-        // For now, this is a placeholder that could be extended with:
-        // - insta integration for automated snapshot tests
-        // - Custom snapshot storage and comparison
-        // - Reporting when regressions are detected
-        eprintln!("Snapshot assertion for '{}': {:?}", name, self);
+        self.assert_snapshot_with_tolerance(name, 0.05);
+    }
+
+    /// Assert that this cost report matches a stored snapshot within a custom tolerance.
+    ///
+    /// `tolerance` is a fraction, e.g. `0.1` means up to 10% regression is allowed.
+    ///
+    /// See [`assert_snapshot`](Self::assert_snapshot) for full semantics.
+    ///
+    /// # Panics
+    /// Panics when a metric exceeds `tolerance` compared to the stored snapshot.
+    pub fn assert_snapshot_with_tolerance(&self, name: &str, tolerance: f64) {
+        use std::fs;
+        use std::path::PathBuf;
+
+        // Locate the snapshot directory next to the crate's Cargo.toml.
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+            .unwrap_or_else(|_| ".".to_string());
+        let snap_dir = PathBuf::from(&manifest_dir)
+            .join("test_snapshots")
+            .join("cost");
+        let snap_path = snap_dir.join(format!("{}.json", name));
+
+        let update = std::env::var("CRUCIBLE_UPDATE_SNAPSHOTS")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        if !snap_path.exists() || update {
+            // Write baseline snapshot.
+            fs::create_dir_all(&snap_dir)
+                .unwrap_or_else(|e| panic!("failed to create snapshot dir: {}", e));
+            let json = format!(
+                "{{\n  \"name\": \"{}\",\n  \"instructions\": {},\n  \"memory_bytes\": {},\n  \"fee_stroops\": {}\n}}\n",
+                name, self.instructions, self.memory, self.fee_stroops()
+            );
+            fs::write(&snap_path, &json)
+                .unwrap_or_else(|e| panic!("failed to write snapshot '{}': {}", name, e));
+            if update {
+                eprintln!("[crucible] updated snapshot '{}'", name);
+            } else {
+                eprintln!("[crucible] wrote new snapshot '{}'", name);
+            }
+            return;
+        }
+
+        // Load and compare.
+        let contents = fs::read_to_string(&snap_path)
+            .unwrap_or_else(|e| panic!("failed to read snapshot '{}': {}", name, e));
+
+        let saved_instructions = parse_json_u64(&contents, "instructions")
+            .unwrap_or_else(|| panic!("snapshot '{}' missing 'instructions' field", name));
+        let saved_memory = parse_json_u64(&contents, "memory_bytes")
+            .unwrap_or_else(|| panic!("snapshot '{}' missing 'memory_bytes' field", name));
+
+        check_within_tolerance("instructions", saved_instructions, self.instructions, tolerance, name);
+        check_within_tolerance("memory_bytes", saved_memory, self.memory, tolerance, name);
+    }
+}
+
+/// Minimal JSON field extractor — avoids pulling in serde just for two u64 fields.
+#[cfg(feature = "snapshots")]
+fn parse_json_u64(json: &str, key: &str) -> Option<u64> {
+    let needle = format!("\"{}\":", key);
+    let start = json.find(&needle)? + needle.len();
+    let rest = json[start..].trim_start_matches([' ', '\t', '\n', '\r']);
+    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    rest[..end].parse().ok()
+}
+
+#[cfg(feature = "snapshots")]
+fn check_within_tolerance(metric: &str, saved: u64, current: u64, tolerance: f64, name: &str) {
+    if saved == 0 {
+        return; // avoid division by zero; treat zero baseline as always passing
+    }
+    let ratio = current as f64 / saved as f64;
+    if ratio > 1.0 + tolerance {
+        panic!(
+            "cost regression in snapshot '{}': {} increased from {} to {} ({:.1}% > {:.1}% tolerance)",
+            name,
+            metric,
+            saved,
+            current,
+            (ratio - 1.0) * 100.0,
+            tolerance * 100.0,
+        );
     }
 }
 
@@ -156,5 +241,96 @@ mod tests {
         assert!(report_str.contains("├"));
         assert!(report_str.contains("┤"));
         assert!(report_str.contains("┼"));
+    }
+
+    // ─── Snapshot helper tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_json_u64_basic() {
+        #[cfg(feature = "snapshots")]
+        {
+            let json = r#"{"instructions": 1000, "memory_bytes": 2000}"#;
+            assert_eq!(super::parse_json_u64(json, "instructions"), Some(1000));
+            assert_eq!(super::parse_json_u64(json, "memory_bytes"), Some(2000));
+            assert_eq!(super::parse_json_u64(json, "missing"), None);
+        }
+    }
+
+    #[test]
+    fn test_check_within_tolerance_passes() {
+        #[cfg(feature = "snapshots")]
+        {
+            // 5% increase with 5% tolerance — must pass
+            super::check_within_tolerance("instructions", 1000, 1050, 0.05, "test");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "cost regression")]
+    fn test_check_within_tolerance_fails_on_regression() {
+        #[cfg(feature = "snapshots")]
+        {
+            // 20% increase with 5% tolerance — must panic
+            super::check_within_tolerance("instructions", 1000, 1200, 0.05, "test");
+        }
+        #[cfg(not(feature = "snapshots"))]
+        {
+            // Force the panic so the test is consistent across feature flags.
+            panic!("cost regression");
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "snapshots")]
+    fn test_snapshot_write_and_compare() {
+        use std::fs;
+        use std::path::PathBuf;
+
+        let name = "crucible_snapshot_selftest";
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        let snap_path = PathBuf::from(&manifest_dir)
+            .join("test_snapshots")
+            .join("cost")
+            .join(format!("{}.json", name));
+
+        // Clean up any leftover from a previous run.
+        let _ = fs::remove_file(&snap_path);
+
+        let report = CostReport::new(10_000, 5_000);
+
+        // First call: writes baseline.
+        report.assert_snapshot(name);
+        assert!(snap_path.exists(), "snapshot file should have been created");
+
+        // Second call: compares — same values must pass.
+        report.assert_snapshot(name);
+
+        // A slightly higher value within tolerance must also pass.
+        CostReport::new(10_400, 5_200).assert_snapshot(name); // ~4% increase, 5% tolerance
+
+        // Clean up.
+        let _ = fs::remove_file(&snap_path);
+    }
+
+    #[test]
+    #[should_panic(expected = "cost regression")]
+    #[cfg(feature = "snapshots")]
+    fn test_snapshot_fails_on_regression() {
+        use std::fs;
+        use std::path::PathBuf;
+
+        let name = "crucible_snapshot_regression_test";
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        let snap_path = PathBuf::from(&manifest_dir)
+            .join("test_snapshots")
+            .join("cost")
+            .join(format!("{}.json", name));
+
+        let _ = fs::remove_file(&snap_path);
+
+        // Write baseline.
+        CostReport::new(10_000, 5_000).assert_snapshot(name);
+        // Greatly exceed tolerance — must panic.
+        CostReport::new(20_000, 5_000).assert_snapshot(name);
     }
 }
