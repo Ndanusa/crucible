@@ -123,12 +123,28 @@ curl http://localhost:8080/metrics
 curl http://localhost:8080/api/v1/status
 ```
 
+### Applying Database Migrations
+SQLx migrations live in `backend/migrations/`. Apply them after the database is running:
+```bash
+export DATABASE_URL=postgres://crucible:crucible_secret@localhost:5432/crucible_db
+sqlx migrate run --source backend/migrations
+# or from the repo root:
+make db-migrate
+```
+
+Verify migration state at any time with:
+```bash
+sqlx migrate info --source backend/migrations
+```
+
 ### Local Development (without Docker)
 Run Postgres and Redis in Docker, but the Rust app natively:
 ```bash
 docker compose up -d postgres redis
 export DATABASE_URL=postgres://crucible:crucible_secret@localhost:5432/crucible_db
 export REDIS_URL=redis://:crucible_redis_secret@localhost:6379/0
+# Apply migrations before starting the app
+sqlx migrate run --source backend/migrations
 cargo run
 ```
 

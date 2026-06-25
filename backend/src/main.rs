@@ -89,11 +89,7 @@ async fn main() -> Result<(), anyhow::Error> {
             .unwrap_or_else(|| "http://localhost:4318/v1/traces".to_string()),
     );
 
-    let _tracing_guard = TracingService::init_with_filter(
-        tracing_config,
-        Some(&config.observability.log_level),
-        config.observability.json_logs(env),
-    )?;
+    let _tracing_guard = TracingService::init(tracing_config)?;
 
     let startup_span = info_span!("app.startup");
     let _startup_enter = startup_span.enter();
