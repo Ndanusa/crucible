@@ -67,6 +67,26 @@ impl CostReport {
 
         output
     }
+
+    /// Returns a CI-safe ASCII report of the costs.
+    ///
+    /// This keeps the same core metrics as [`report`](Self::report) while avoiding
+    /// box-drawing characters for terminals, logs, and markdown renderers that do
+    /// not handle Unicode table borders consistently.
+    pub fn report_plain(&self) -> String {
+        let instructions_str = format_with_commas(self.instructions);
+        let memory_str = format_with_commas(self.memory);
+        let fee_str = format!("{} str", self.fee_stroops());
+
+        format!(
+            "Metric | Value\n\
+             --- | ---\n\
+             Instructions | {}\n\
+             Memory (bytes) | {}\n\
+             Estimated fee | {}",
+            instructions_str, memory_str, fee_str
+        )
+    }
 }
 
 /// Format a number with comma separators for readability.
@@ -120,8 +140,7 @@ impl CostReport {
         use std::path::PathBuf;
 
         // Locate the snapshot directory next to the crate's Cargo.toml.
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-            .unwrap_or_else(|_| ".".to_string());
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
         let snap_dir = PathBuf::from(&manifest_dir)
             .join("test_snapshots")
             .join("cost");
@@ -158,7 +177,13 @@ impl CostReport {
         let saved_memory = parse_json_u64(&contents, "memory_bytes")
             .unwrap_or_else(|| panic!("snapshot '{}' missing 'memory_bytes' field", name));
 
-        check_within_tolerance("instructions", saved_instructions, self.instructions, tolerance, name);
+        check_within_tolerance(
+            "instructions",
+            saved_instructions,
+            self.instructions,
+            tolerance,
+            name,
+        );
         check_within_tolerance("memory_bytes", saved_memory, self.memory, tolerance, name);
     }
 }
@@ -169,7 +194,9 @@ fn parse_json_u64(json: &str, key: &str) -> Option<u64> {
     let needle = format!("\"{}\":", key);
     let start = json.find(&needle)? + needle.len();
     let rest = json[start..].trim_start_matches([' ', '\t', '\n', '\r']);
-    let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(rest.len());
     rest[..end].parse().ok()
 }
 
@@ -241,6 +268,33 @@ mod tests {
         assert!(report_str.contains("├"));
         assert!(report_str.contains("┤"));
         assert!(report_str.contains("┼"));
+    }
+
+    #[test]
+    fn test_report_plain_is_ascii_without_box_drawing_characters() {
+        let report = CostReport::new(1_234_567, 45_678);
+        let report_str = report.report_plain();
+
+        assert!(report_str.is_ascii());
+        assert!(!report_str.contains("┌"));
+        assert!(!report_str.contains("┐"));
+        assert!(!report_str.contains("└"));
+        assert!(!report_str.contains("┘"));
+        assert!(!report_str.contains("├"));
+        assert!(!report_str.contains("┤"));
+        assert!(!report_str.contains("┼"));
+        assert!(!report_str.contains("│"));
+    }
+
+    #[test]
+    fn test_report_plain_contains_core_cost_information() {
+        let report = CostReport::new(1_234_567, 45_678);
+        let report_str = report.report_plain();
+
+        assert!(report_str.contains("Metric | Value"));
+        assert!(report_str.contains("Instructions | 1,234,567"));
+        assert!(report_str.contains("Memory (bytes) | 45,678"));
+        assert!(report_str.contains("Estimated fee | 12345 str"));
     }
 
     // ─── Snapshot helper tests ────────────────────────────────────────────────
