@@ -8,7 +8,7 @@ use redis::{AsyncCommands, Client as RedisClient};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use thiserror::Error;
-use tracing::{debug, info, warn, instrument};
+use tracing::{debug, info, instrument, warn};
 
 // ---------------------------------------------------------------------------
 // Error type

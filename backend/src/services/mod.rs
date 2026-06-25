@@ -2,7 +2,6 @@ pub mod alerts;
 pub mod analytics_aggregator;
 pub mod audit;
 pub mod business_metrics;
-pub mod cache;
 pub mod cache_invalidation;
 pub mod cache_metrics;
 pub mod circuit_breaker;

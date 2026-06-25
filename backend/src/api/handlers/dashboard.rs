@@ -1,14 +1,29 @@
-use axum::{
-    extract::{Path, State},
-    response::IntoResponse,
-    Json,
-};
+//! Dashboard data API handler.
+//!
+//! Provides dashboard endpoints for aggregated system metrics, contract
+//! metrics, and active runtime state.
+//! Results are cached in Redis for [`CACHE_TTL_SECS`] seconds to reduce load
+//! on downstream services.
+//!
+//! # Example
+//! ```rust,no_run
+//! use std::sync::Arc;
+//! use axum::{Router, routing::get};
+//! use backend::api::handlers::dashboard::{DashboardState, get_dashboard};
+//!
+//! # async fn example() {
+//! // state is constructed with your real service instances
+//! # }
+//! ```
+
+use axum::{extract::{Path, State}, response::IntoResponse, Json};
 use chrono::{DateTime, Utc};
 use redis::{AsyncCommands, Client as RedisClient};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sqlx::PgPool;
 use std::sync::Arc;
-use tracing::{debug, error, info, instrument, warn};
+use thiserror::Error;
+use tracing::{debug, error, warn};
 use utoipa::ToSchema;
 
 use crate::error::AppError;
@@ -21,45 +36,52 @@ use crate::services::{
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
+
+const CACHE_KEY: &str = "dashboard:summary";
 const CACHE_TTL_SECS: u64 = 30;
 
 // ---------------------------------------------------------------------------
-// State
+// Error type
 // ---------------------------------------------------------------------------
 
-/// Shared application state for dashboard handlers.
-pub struct DashboardState {
-    pub db: PgPool,
-    pub redis_conn: redis::aio::ConnectionManager,
-    pub metrics_exporter: Arc<MetricsExporter>,
-    pub error_manager: Arc<ErrorManager>,
-    pub alert_manager: Arc<AlertManager>,
-    pub redis_client: RedisClient,
+/// Errors that can occur while building the dashboard response.
+#[derive(Debug, Error)]
+pub enum DashboardError {
+    /// A Redis error occurred.
+    #[error("Cache error: {0}")]
+    Cache(#[from] redis::RedisError),
+
+    /// A database error occurred.
+    #[error("Database error: {0}")]
+    Database(#[from] sqlx::Error),
+
+    /// JSON serialization/deserialization failed.
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+
+    /// The requested resource was not found.
+    #[error("{0}")]
+    NotFound(String),
+}
+
+impl IntoResponse for DashboardError {
+    fn into_response(self) -> axum::response::Response {
+        let status = match self {
+            DashboardError::NotFound(_) => axum::http::StatusCode::NOT_FOUND,
+            _ => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        };
+
+        error!(error = %self, status = %status, "Dashboard handler error");
+        let body = serde_json::json!({ "error": self.to_string() });
+        (status, Json(body)).into_response()
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Response types
 // ---------------------------------------------------------------------------
 
-/// Aggregated dashboard metrics.
-#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
-pub struct DashboardMetrics {
-    pub total_contracts: i64,
-    pub total_transactions: i64,
-    pub avg_processing_time_ms: f64,
-    pub failed_transactions_24h: i64,
-    pub timestamp: DateTime<Utc>,
-}
-
-/// Per-contract statistics.
-#[derive(Debug, Serialize, Deserialize, Clone, ToSchema)]
-pub struct ContractStats {
-    pub contract_id: String,
-    pub invocation_count: i64,
-    pub last_invoked: Option<DateTime<Utc>>,
-    pub avg_gas_cost: f64,
-}
-
+/// Aggregated dashboard data returned by `GET /api/dashboard`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DashboardData {
     /// Current system metrics snapshot.
@@ -70,159 +92,53 @@ pub struct DashboardData {
     pub active_alerts: Vec<Alert>,
 }
 
-// ---------------------------------------------------------------------------
-// Handlers
-// ---------------------------------------------------------------------------
-
-/// `GET /api/v1/dashboard/metrics` — Aggregated dashboard metrics with Redis caching.
-#[utoipa::path(
-    get,
-    path = "/api/v1/dashboard/metrics",
-    responses(
-        (status = 200, description = "Dashboard metrics", body = DashboardMetrics),
-        (status = 500, description = "Internal server error")
-    ),
-    tag = "dashboard"
-)]
-#[instrument(skip(state))]
-pub async fn get_dashboard_metrics(
-    State(state): State<Arc<DashboardState>>,
-) -> Result<impl IntoResponse, AppError> {
-    info!("Fetching dashboard metrics");
-
-    let cache_key = "dashboard:metrics";
-    let mut redis_conn = state.redis_conn.clone();
-    
-    if let Ok(cached) = redis_conn.get::<_, String>(cache_key).await {
-        if let Ok(metrics) = serde_json::from_str::<DashboardMetrics>(&cached) {
-            info!("Returning cached dashboard metrics");
-            return Ok(Json(metrics));
-        }
-    }
-
-    let total_contracts = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM contracts")
-        .fetch_one(&state.db)
-        .await?;
-
-    let total_transactions = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM transactions")
-        .fetch_one(&state.db)
-        .await?;
-
-    let avg_processing_time = sqlx::query_scalar::<_, Option<f64>>(
-        "SELECT AVG(processing_time_ms) FROM transactions WHERE processing_time_ms IS NOT NULL",
-    )
-    .fetch_one(&state.db)
-    .await?
-    .unwrap_or(0.0);
-
-    let failed_24h = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM transactions \
-         WHERE status = 'failed' AND created_at > NOW() - INTERVAL '24 hours'",
-    )
-    .fetch_one(&state.db)
-    .await?;
-
-    let metrics = DashboardMetrics {
-        total_contracts,
-        total_transactions,
-        avg_processing_time_ms: avg_processing_time,
-        failed_transactions_24h: failed_24h,
-        timestamp: Utc::now(),
-    };
-
-    if let Ok(json) = serde_json::to_string(&metrics) {
-        let _: Result<(), _> = redis_conn.set_ex(cache_key, json, 60).await;
-    }
-
-    info!(
-        contracts = metrics.total_contracts,
-        transactions = metrics.total_transactions,
-        "Dashboard metrics retrieved"
-    );
-
-    Ok(Json(metrics))
+/// Aggregated dashboard metrics for the build and contract overview.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DashboardMetrics {
+    pub total_contracts: u64,
+    pub total_transactions: u64,
+    pub avg_processing_time_ms: f64,
+    pub failed_transactions_24h: u64,
+    pub timestamp: DateTime<Utc>,
 }
 
-/// `GET /api/v1/dashboard/contracts/:contract_id/stats` — Per-contract statistics.
-#[utoipa::path(
-    get,
-    path = "/api/v1/dashboard/contracts/{contract_id}/stats",
-    params(("contract_id" = String, Path, description = "Contract identifier")),
-    responses(
-        (status = 200, description = "Contract statistics", body = ContractStats),
-        (status = 404, description = "Contract not found"),
-        (status = 500, description = "Internal server error")
-    ),
-    tag = "dashboard"
-)]
-#[instrument(skip(state))]
-pub async fn get_contract_stats(
-    State(state): State<Arc<DashboardState>>,
-    Path(contract_id): Path<String>,
-) -> Result<impl IntoResponse, AppError> {
-    info!(contract_id = %contract_id, "Fetching contract statistics");
-
-    let cache_key = format!("dashboard:contract:{}:stats", contract_id);
-    let mut redis_conn = state.redis_conn.clone();
-
-    if let Ok(cached) = redis_conn.get::<_, String>(&cache_key).await {
-        if let Ok(stats) = serde_json::from_str::<ContractStats>(&cached) {
-            return Ok(Json(stats));
-        }
-    }
-
-    // Verify contract exists
-    let exists = sqlx::query_scalar::<_, i32>("SELECT 1 FROM contracts WHERE contract_id = $1")
-        .bind(&contract_id)
-        .fetch_optional(&state.db)
-        .await?
-        .is_some();
-
-    if !exists {
-        error!(contract_id = %contract_id, "Contract not found");
-        return Err(AppError::NotFound(format!(
-            "Contract {} not found",
-            contract_id
-        )));
-    }
-
-    let row = sqlx::query_as::<_, (i64, Option<DateTime<Utc>>, Option<f64>)>(
-        r#"
-        SELECT
-            COUNT(*) as invocation_count,
-            MAX(created_at) as last_invoked,
-            AVG(gas_cost) as avg_gas_cost
-        FROM transactions
-        WHERE contract_id = $1
-        "#
-    )
-    .bind(&contract_id)
-    .fetch_one(&state.db)
-    .await?;
-
-    let stats = ContractStats {
-        contract_id: contract_id.clone(),
-        invocation_count: row.0,
-        last_invoked: row.1,
-        avg_gas_cost: row.2.unwrap_or(0.0),
-    };
-
-    if let Ok(json) = serde_json::to_string(&stats) {
-        let _: Result<(), _> = redis_conn.set_ex(&cache_key, json, 30).await;
-    }
-
-    Ok(Json(stats))
+/// Contract-specific usage metrics.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ContractStats {
+    pub contract_id: String,
+    pub invocation_count: u64,
+    pub last_invoked: Option<DateTime<Utc>>,
+    pub avg_gas_cost: f64,
 }
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+
+/// Shared application state for the dashboard handler.
+pub struct DashboardState {
+    pub metrics_exporter: Arc<MetricsExporter>,
+    pub error_manager: Arc<ErrorManager>,
+    pub alert_manager: Arc<AlertManager>,
+    pub db: PgPool,
+    pub redis: RedisClient,
+}
+
+// ---------------------------------------------------------------------------
+// Handler
+// ---------------------------------------------------------------------------
 
 /// `GET /api/dashboard` — return aggregated dashboard data.
-#[instrument(skip(state))]
+///
+/// Attempts to serve a cached response from Redis. On cache miss (or cache
+/// error) the data is assembled from the live services and the cache is
+/// populated before responding.
+#[tracing::instrument(skip(state))]
 pub async fn get_dashboard(
     State(state): State<Arc<DashboardState>>,
-) -> Result<impl IntoResponse, AppError> {
-    info!("Fetching full dashboard data");
-    
-    let cache_key = "dashboard:summary";
-    match try_cache_get::<DashboardData>(&state.redis_client, cache_key).await {
+) -> Result<impl IntoResponse, DashboardError> {
+    // --- try cache ---
+    match try_cache_get(&state.redis, CACHE_KEY).await {
         Ok(Some(cached)) => {
             debug!("Dashboard cache hit");
             return Ok(Json(cached));
@@ -243,19 +159,111 @@ pub async fn get_dashboard(
         active_alerts,
     };
 
-    if let Err(e) = try_cache_set(&state.redis_client, cache_key, &data, CACHE_TTL_SECS).await {
+    // --- populate cache (best-effort) ---
+    if let Err(e) = try_cache_set(&state.redis, CACHE_KEY, &data).await {
         warn!(error = %e, "Failed to populate dashboard cache");
     }
 
     Ok(Json(data))
 }
 
+/// `GET /api/v1/dashboard/metrics` — return aggregate contract and pipeline metrics.
+#[tracing::instrument(skip(state))]
+pub async fn get_dashboard_metrics(
+    State(state): State<Arc<DashboardState>>,
+) -> Result<impl IntoResponse, DashboardError> {
+    match try_cache_get(&state.redis, "dashboard:metrics").await {
+        Ok(Some(cached)) => return Ok(Json(cached)),
+        Ok(None) => debug!("Dashboard metrics cache miss"),
+        Err(e) => warn!(error = %e, "Dashboard metrics cache read failed; falling back to live data"),
+    }
+
+    let total_contracts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM contracts")
+        .fetch_one(&state.db)
+        .await?;
+    let total_transactions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transactions")
+        .fetch_one(&state.db)
+        .await?;
+    let avg_processing_time_ms: Option<f64> = sqlx::query_scalar(
+        "SELECT AVG(processing_time_ms) FROM transactions WHERE processing_time_ms IS NOT NULL",
+    )
+    .fetch_one(&state.db)
+    .await?;
+    let failed_transactions_24h: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM transactions WHERE status = 'failed' AND created_at >= NOW() - INTERVAL '24 hours'",
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let metrics = DashboardMetrics {
+        total_contracts: total_contracts as u64,
+        total_transactions: total_transactions as u64,
+        avg_processing_time_ms: avg_processing_time_ms.unwrap_or(0.0),
+        failed_transactions_24h: failed_transactions_24h as u64,
+        timestamp: Utc::now(),
+    };
+
+    if let Err(e) = try_cache_set(&state.redis, "dashboard:metrics", &metrics).await {
+        warn!(error = %e, "Failed to populate dashboard metrics cache");
+    }
+
+    Ok(Json(metrics))
+}
+
+/// `GET /api/v1/dashboard/contracts/:contract_id/stats` — return contract usage statistics.
+#[tracing::instrument(skip(state))]
+pub async fn get_contract_stats(
+    Path(contract_id): Path<String>,
+    State(state): State<Arc<DashboardState>>,
+) -> Result<impl IntoResponse, DashboardError> {
+    let cache_key = format!("dashboard:contract_stats:{contract_id}");
+
+    match try_cache_get(&state.redis, &cache_key).await {
+        Ok(Some(cached)) => return Ok(Json(cached)),
+        Ok(None) => debug!(contract_id = %contract_id, "Contract stats cache miss"),
+        Err(e) => warn!(error = %e, contract_id = %contract_id, "Contract stats cache read failed; falling back to live data"),
+    }
+
+    let exists: Option<i32> = sqlx::query_scalar("SELECT 1 FROM contracts WHERE contract_id = $1")
+        .bind(&contract_id)
+        .fetch_optional(&state.db)
+        .await?;
+
+    if exists.is_none() {
+        return Err(DashboardError::NotFound(format!(
+            "Contract {contract_id} not found"
+        )));
+    }
+
+    let (invocation_count, last_invoked, avg_gas_cost): (i64, Option<DateTime<Utc>>, Option<f64>) =
+        sqlx::query_as(
+            "SELECT COUNT(*), MAX(created_at), AVG(gas_cost) FROM transactions WHERE contract_id = $1",
+        )
+        .bind(&contract_id)
+        .fetch_one(&state.db)
+        .await?;
+
+    let stats = ContractStats {
+        contract_id,
+        invocation_count: invocation_count as u64,
+        last_invoked,
+        avg_gas_cost: avg_gas_cost.unwrap_or(0.0),
+    };
+
+    if let Err(e) = try_cache_set(&state.redis, &cache_key, &stats).await {
+        warn!(error = %e, contract_id = %stats.contract_id, "Failed to populate contract stats cache");
+    }
+
+    Ok(Json(stats))
+}
+
 // ---------------------------------------------------------------------------
 // Cache helpers
 // ---------------------------------------------------------------------------
-async fn try_cache_get<T>(redis: &RedisClient, key: &str) -> Result<Option<T>, AppError>
+
+async fn try_cache_get<T>(redis: &RedisClient, key: &str) -> Result<Option<T>, DashboardError>
 where
-    T: for<'a> Deserialize<'a>,
+    T: DeserializeOwned,
 {
     let mut conn = redis.get_multiplexed_async_connection().await?;
     let raw: Option<String> = conn.get(key).await?;
@@ -265,7 +273,11 @@ where
     }
 }
 
-async fn try_cache_set<T>(redis: &RedisClient, key: &str, data: &T, ttl_secs: u64) -> Result<(), AppError>
+async fn try_cache_set<T>(
+    redis: &RedisClient,
+    key: &str,
+    data: &T,
+) -> Result<(), DashboardError>
 where
     T: Serialize,
 {
@@ -278,50 +290,129 @@ where
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use sqlx::postgres::PgPoolOptions;
 
-    fn make_state(db: PgPool, redis_conn: redis::aio::ConnectionManager) -> Arc<DashboardState> {
+    fn make_state() -> Arc<DashboardState> {
         Arc::new(DashboardState {
-            db,
-            redis_conn,
             metrics_exporter: Arc::new(MetricsExporter::new()),
             error_manager: Arc::new(ErrorManager::new()),
             alert_manager: Arc::new(AlertManager::new()),
-            redis_client: RedisClient::open("redis://127.0.0.1:1/").unwrap(),
+            db: PgPoolOptions::new()
+                .max_connections(1)
+                .connect_lazy("postgres://postgres:postgres@localhost/crucible_test")
+                .unwrap(),
+            // Use a URL that will fail to connect — the handler degrades gracefully.
+            redis: RedisClient::open("redis://127.0.0.1:1/").unwrap(),
         })
     }
 
-    #[test]
-    fn test_dashboard_metrics_serialization() {
-        let metrics = DashboardMetrics {
-            total_contracts: 100,
-            total_transactions: 5000,
-            avg_processing_time_ms: 125.5,
-            failed_transactions_24h: 3,
-            timestamp: Utc::now(),
-        };
-        let json = serde_json::to_string(&metrics).unwrap();
-        let back: DashboardMetrics = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.total_contracts, 100);
-        assert_eq!(back.total_transactions, 5000);
+    fn make_app(state: Arc<DashboardState>) -> Router {
+        Router::new()
+            .route("/api/dashboard", get(get_dashboard))
+            .with_state(state)
     }
 
-    #[test]
-    fn test_contract_stats_serialization() {
-        let stats = ContractStats {
-            contract_id: "test_contract_123".to_string(),
-            invocation_count: 42,
-            last_invoked: Some(Utc::now()),
-            avg_gas_cost: 1500.75,
-        };
-        let json = serde_json::to_string(&stats).unwrap();
-        let deserialized: ContractStats = serde_json::from_str(&json).unwrap();
-        
-        assert_eq!(deserialized.contract_id, "test_contract_123");
-        assert_eq!(deserialized.invocation_count, 42);
+    #[tokio::test]
+    async fn test_dashboard_returns_200_without_redis() {
+        let app = make_app(make_state());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/dashboard")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_dashboard_response_shape() {
+        let app = make_app(make_state());
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/dashboard")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        assert!(json.get("metrics").is_some());
+        assert!(json.get("active_recovery_tasks").is_some());
+        assert!(json.get("active_alerts").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_dashboard_metrics_fields() {
+        let state = make_state();
+        state.metrics_exporter.update_metrics(42.0, 2048, 120).await;
+
+        let app = make_app(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/dashboard")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        assert_eq!(json["metrics"]["cpu_usage"], 42.0);
+        assert_eq!(json["metrics"]["memory_usage"], 2048);
+        assert_eq!(json["metrics"]["uptime"], 120);
+    }
+
+    #[tokio::test]
+    async fn test_dashboard_includes_recovery_tasks() {
+        use crate::services::error_recovery::RecoveryError;
+
+        let state = make_state();
+        state
+            .error_manager
+            .handle_error(RecoveryError::Internal("boom".into()), "worker_a")
+            .await
+            .unwrap();
+
+        let app = make_app(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/dashboard")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        let tasks = json["active_recovery_tasks"].as_array().unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0]["name"], "worker_a");
     }
 
     #[test]

@@ -1,5 +1,3 @@
-//! Application configuration.
-//!
 //! CONFIG APPROACH: Option A — layered config crate
 //! Rationale: Using the `config` crate provides a robust, layered approach where environment-specific
 //! defaults are cleanly defined in TOML files, while sensitive secrets and infrastructure-specific
@@ -10,6 +8,8 @@
 //! - [`AppConfig`] — hot-reloadable runtime configuration, loaded via the layered config crate.
 //! - [`reload`] — [`ConfigManager`] and Axum handlers for live config updates.
 
+use config::{Config, Environment as ConfigEnvironment, File, FileFormat};
+use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
 pub mod database;
@@ -150,10 +150,26 @@ impl AppConfig {
             );
         }
 
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(ConfigError::ValidationError(errors))
+        if self.database.url.is_empty() {
+            errors.push("Database URL cannot be empty.".to_string());
         }
+
+        if self.redis.url.is_empty() {
+            errors.push("Redis URL cannot be empty.".to_string());
+        }
+
+        if self.database.max_connections == 0 {
+            errors.push("Database max_connections must be greater than 0.".to_string());
+        }
+
+        if self.redis.pool_size == 0 {
+            errors.push("Redis pool_size must be greater than 0.".to_string());
+        }
+
+        if !errors.is_empty() {
+            return Err(ConfigError::ValidationError(errors));
+        }
+
+        Ok(())
     }
 }

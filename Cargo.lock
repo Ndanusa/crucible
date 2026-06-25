@@ -458,7 +458,6 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "soroban-sdk",
  "sqlx",
  "stellar-xdr 21.2.0",

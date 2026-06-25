@@ -150,7 +150,7 @@ impl BusinessMetricsService {
         };
 
         let tags_json = serde_json::to_value(&tags)
-            .map_err(|e| AppError::Internal(e.to_string()))?;
+            .map_err(|e| AppError::InternalError(e.to_string()))?;
 
         let category_str = serde_json::to_string(&category)
             .map_err(|e| AppError::InternalError(e.to_string()))?;
@@ -177,7 +177,7 @@ impl BusinessMetricsService {
         .await
         .map_err(|e| {
             error!(error = %e, "Failed to record metric");
-            AppError::DatabaseError(e)
+            AppError::Database(e)
         })?;
 
         let metric = BusinessMetric {
@@ -248,7 +248,7 @@ impl BusinessMetricsService {
             };
 
             let tags_json = serde_json::to_value(&tags)
-                .map_err(|e| AppError::Internal(e.to_string()))?;
+                .map_err(|e| AppError::InternalError(e.to_string()))?;
 
             sqlx::query(
                 r#"
@@ -439,7 +439,7 @@ impl BusinessMetricsService {
             .bind(cutoff)
             .execute(&self.db)
             .await
-            .map_err(|e| AppError::DatabaseError(e))?;
+            .map_err(AppError::Database)?;
 
         let deleted = result.rows_affected();
         info!(deleted, retention_days, "Pruned old metrics");
