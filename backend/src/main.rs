@@ -139,7 +139,7 @@ async fn main() -> Result<(), anyhow::Error> {
         )
         .route("/upgrade-plan", post(contracts::create_upgrade_plan))
         .route("/templates", get(contracts::get_templates));
-
+    )]
     let coverage_router = Router::new()
         .route("/", post(coverage::submit_coverage))
         .route("/:project", get(coverage::get_latest_coverage))
@@ -175,7 +175,10 @@ async fn main() -> Result<(), anyhow::Error> {
                 .route("/prometheus", get(profiling::get_prometheus_metrics))
                 .route("/status", get(profiling::get_system_status))
                 .route("/profile", post(profiling::trigger_profile_collection))
-                .route("/contracts/benchmark", post(profiling::run_contract_benchmark))
+                .route(
+                    "/contracts/benchmark",
+                    post(profiling::run_contract_benchmark),
+                )
                 .with_state(profiling_state.clone()),
         )
         .route("/api/status", get(profiling::get_system_status))
@@ -186,14 +189,20 @@ async fn main() -> Result<(), anyhow::Error> {
             Router::new()
                 .route("/", get(get_dashboard))
                 .route("/metrics", get(dashboard::get_dashboard_metrics))
-                .route("/contracts/:contract_id/stats", get(dashboard::get_contract_stats))
+                .route(
+                    "/contracts/:contract_id/stats",
+                    get(dashboard::get_contract_stats),
+                )
                 .with_state(dashboard_state.clone()),
         )
         .nest("/api/v1/audit", audit::routes(audit_service))
         .nest(
             "/api/v1/contracts",
             Router::new()
-                .route("/compile", post(backend::api::handlers::contracts::compile_contract))
+                .route(
+                    "/compile",
+                    post(backend::api::handlers::contracts::compile_contract),
+                )
                 .route(
                     "/analyze-dependencies",
                     post(backend::api::handlers::contracts::analyze_dependencies),
@@ -211,15 +220,27 @@ async fn main() -> Result<(), anyhow::Error> {
                     "/upgrade-plan",
                     post(backend::api::handlers::contracts::create_upgrade_plan),
                 )
-                .route("/templates", get(backend::api::handlers::contracts::get_templates))
+                .route(
+                    "/templates",
+                    get(backend::api::handlers::contracts::get_templates),
+                )
                 .with_state(profiling_state.clone()),
         )
-        .route("/api/v1/networks", get(backend::api::handlers::contracts::get_networks))
+        .route(
+            "/api/v1/networks",
+            get(backend::api::handlers::contracts::get_networks),
+        )
         .nest(
             "/api/v1/admin",
             Router::new()
-                .route("/system-stats", get(backend::api::handlers::admin::get_system_stats))
-                .route("/maintenance", post(backend::api::handlers::admin::set_maintenance_mode))
+                .route(
+                    "/system-stats",
+                    get(backend::api::handlers::admin::get_system_stats),
+                )
+                .route(
+                    "/maintenance",
+                    post(backend::api::handlers::admin::set_maintenance_mode),
+                )
                 .route("/logs", get(backend::api::handlers::admin::get_admin_logs))
                 .with_state(profiling_state.clone()),
         )
@@ -235,14 +256,23 @@ async fn main() -> Result<(), anyhow::Error> {
             "/api/v1/coverage",
             Router::new()
                 .route("/", post(backend::api::handlers::coverage::submit_coverage))
-                .route("/:project", get(backend::api::handlers::coverage::get_latest_coverage))
+                .route(
+                    "/:project",
+                    get(backend::api::handlers::coverage::get_latest_coverage),
+                )
                 .with_state(coverage_state),
         )
-        .route("/api/v1/ws/dashboard", get(ws_dashboard_handler).with_state(ws_state))
+        .route(
+            "/api/v1/ws/dashboard",
+            get(ws_dashboard_handler).with_state(ws_state),
+        )
         .route("/api/dashboard", get(get_dashboard))
         .with_state(dashboard_state)
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
-        .layer(middleware::from_fn_with_state(profiling_state, logging_middleware))
+        .layer(middleware::from_fn_with_state(
+            profiling_state,
+            logging_middleware,
+        ))
         .layer(TraceLayer::new_for_http())
         .layer(cors);
 
@@ -264,7 +294,9 @@ async fn main() -> Result<(), anyhow::Error> {
 
 async fn shutdown_signal() {
     let ctrl_c = async {
-        signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
     };
 
     #[cfg(unix)]
