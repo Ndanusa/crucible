@@ -19,6 +19,10 @@ use crate::services::{
         ContractBenchmarkError, ContractBenchmarkReport, ContractBenchmarkRequest,
         ContractBenchmarkService,
     },
+    error_recovery::ErrorManager,
+    log_aggregator::LogAggregator,
+    sys_metrics::MetricsExporter,
+    tracing::TracingService,
 };
 
 pub struct AppState {

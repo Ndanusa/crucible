@@ -1,4 +1,3 @@
-#![allow(deprecated)]
 //! Mock token contract for testing Soroban contracts.
 //!
 //! Provides `MockToken` - a wrapper around the Stellar Asset Contract (SAC)
@@ -103,10 +102,7 @@ impl MockToken {
         // Create an admin for the XLM token
         let _admin = env
             .inner()
-            .register_contract::<soroban_sdk::testutils::MockAuthContract>(
-                None,
-                soroban_sdk::testutils::MockAuthContract {},
-            );
+            .register(soroban_sdk::testutils::MockAuthContract {}, ());
         let sac = env.inner().register_stellar_asset_contract_v2(_admin);
         let address = sac.address();
         env.set_xlm_token_address(address.clone());
@@ -155,10 +151,7 @@ impl MockToken {
         // Create an admin for the token
         let _admin = env
             .inner()
-            .register_contract::<soroban_sdk::testutils::MockAuthContract>(
-                None,
-                soroban_sdk::testutils::MockAuthContract {},
-            );
+            .register(soroban_sdk::testutils::MockAuthContract {}, ());
         let sac = env.inner().register_stellar_asset_contract_v2(_admin);
         let address = sac.address();
 
@@ -302,7 +295,7 @@ impl MockToken {
         let client = TokenClient::new(&self.env, &self.address);
         client.transfer(from, to, &amount);
     }
-    
+
     /// Transfers tokens from one account to another using an allowance (spender flow).
     ///
     /// # Arguments

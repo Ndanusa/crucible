@@ -1,25 +1,14 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
+use std::sync::Arc;
 
 use apalis::prelude::*;
 use apalis_redis::RedisStorage;
-use axum::{
-    middleware,
-    routing::{get, post},
-    Router,
-};
-use backend::api::handlers::dashboard::get_dashboard;
-use backend::api::handlers::ws::ws_dashboard_handler;
 use backend::{
-    api::handlers::{dashboard, errors, profiling, sandbox, stellar},
-    api::middleware::logging::logging_middleware,
-    app_state::{build_application_states, ApplicationStates, SharedServices},
-    config::{
-        reload::{handle_get_config, handle_reload, ConfigManager},
-        AppConfig, Environment,
-    },
+    app_state::{build_application_states, SharedServices},
+    config::{reload::ConfigManager, AppConfig, Environment},
     jobs::{monitor_transaction, TransactionMonitorJob},
+    router::build_router,
     services::{
-        audit,
         contract_benchmark::ContractBenchmarkService,
         error_recovery::ErrorManager,
         log_aggregator::LogAggregator,
@@ -29,18 +18,9 @@ use backend::{
         tracing::{TracingConfig, TracingService},
     },
 };
-use redis::aio::ConnectionManager;
-use redis::Client as RedisClient;
-use std::net::SocketAddr;
-use std::sync::Arc;
+use redis::{aio::ConnectionManager, Client as RedisClient};
 use tokio::signal;
-use tower_http::{
-    cors::{AllowOrigin, Any, CorsLayer},
-    trace::TraceLayer,
-};
 use tracing::info_span;
-use utoipa::OpenApi;
-use utoipa_swagger_ui::SwaggerUi;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
@@ -61,7 +41,6 @@ async fn main() -> Result<(), anyhow::Error> {
     );
 
     let _tracing_guard = TracingService::init(tracing_config)?;
-
     let _enter = info_span!("app.startup").entered();
 
     let db_pool = config
@@ -92,6 +71,15 @@ async fn main() -> Result<(), anyhow::Error> {
     let worker = WorkerBuilder::new("monitor-worker")
         .backend(storage)
         .build_fn(monitor_transaction);
+
+    let health_cache = ConnectionManager::new(redis_client.clone()).await?;
+    let health_queue = ConnectionManager::new(redis_client.clone()).await?;
+
+    let health_state = health::HealthState {
+        db: db_pool.clone(),
+        cache: health_cache,
+        queue: health_queue,
+    };
 
     let shared_services = SharedServices {
         metrics_exporter,
@@ -313,28 +301,5 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => tracing::info!("Received Ctrl+C, initiating graceful shutdown"),
         _ = terminate => tracing::info!("Received SIGTERM, initiating graceful shutdown"),
-    }
-}
-
-fn build_cors_layer(config: &AppConfig) -> CorsLayer {
-    if config.cors.allowed_origins.contains(&"*".to_string()) {
-        CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any)
-    } else {
-        let origins: Vec<axum::http::HeaderValue> = config
-            .cors
-            .allowed_origins
-            .iter()
-            .map(|o| {
-                o.parse()
-                    .unwrap_or_else(|_| panic!("Invalid CORS origin: {}", o))
-            })
-            .collect();
-        CorsLayer::new()
-            .allow_origin(AllowOrigin::list(origins))
-            .allow_methods(Any)
-            .allow_headers(Any)
     }
 }

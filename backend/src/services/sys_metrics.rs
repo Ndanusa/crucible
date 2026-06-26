@@ -358,7 +358,7 @@ impl BuildMetricsService {
                     build_timestamp,
                 },
             )
-            .collect())
+            .collect()
     }
 
 /// Delete all metrics for a project.
