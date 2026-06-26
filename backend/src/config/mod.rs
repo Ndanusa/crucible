@@ -18,6 +18,7 @@ pub mod error;
 pub mod observability;
 pub mod redis;
 pub mod reload;
+pub mod sanitize;
 pub mod server;
 
 #[cfg(test)]
@@ -28,6 +29,7 @@ pub use database::DatabaseConfig;
 pub use error::ConfigError;
 pub use observability::ObservabilityConfig;
 pub use redis::RedisConfig;
+pub use sanitize::{sanitize, SanitizedConfig};
 pub use server::ServerConfig;
 
 use config::{Config as ConfigBuilder, Environment as ConfigEnvironment, File, FileFormat};

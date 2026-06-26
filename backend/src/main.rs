@@ -154,7 +154,9 @@ async fn main() -> Result<(), anyhow::Error> {
             "/maintenance",
             post(backend::api::handlers::admin::set_maintenance_mode),
         )
-        .route("/logs", get(backend::api::handlers::admin::get_admin_logs));
+        .route("/logs", get(backend::api::handlers::admin::get_admin_logs))
+        .route("/config", get(backend::api::handlers::admin::get_effective_config))
+        .with_state(config_manager.clone());
 
     let cors = build_cors_layer(&config);
 
@@ -215,14 +217,6 @@ async fn main() -> Result<(), anyhow::Error> {
                 .with_state(profiling_state.clone()),
         )
         .route("/api/v1/networks", get(backend::api::handlers::contracts::get_networks))
-        .nest(
-            "/api/v1/admin",
-            Router::new()
-                .route("/system-stats", get(backend::api::handlers::admin::get_system_stats))
-                .route("/maintenance", post(backend::api::handlers::admin::set_maintenance_mode))
-                .route("/logs", get(backend::api::handlers::admin::get_admin_logs))
-                .with_state(profiling_state.clone()),
-        )
         .nest(
             "/api/v1/errors",
             errors::error_analytics_routes(db_pool.clone(), redis_client.clone()),
