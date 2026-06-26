@@ -9,6 +9,7 @@ use axum::{
 };
 use backend::{
     api::handlers::{admin, contracts, coverage, dashboard, errors, profiling, sandbox, stellar, ws},
+    api::middleware::auth::{require_admin_auth, AdminAuthState},
     api::middleware::logging::logging_middleware,
     app_state::{build_application_states, ApplicationStates, SharedServices},
     config::{
@@ -130,10 +131,14 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let cors = build_cors_layer(&config);
 
+    // Bearer-token auth registry for privileged admin/config endpoints.
+    let admin_auth = Arc::new(AdminAuthState::from_env());
+
     let app = build_router(
         states,
         config_manager,
         sandbox_service,
+        admin_auth,
         db_pool.clone(),
         redis_client.clone(),
         cors,
@@ -165,6 +170,7 @@ fn build_router(
     states: ApplicationStates,
     config_manager: Arc<ConfigManager>,
     sandbox_service: Arc<ContractSandboxService>,
+    admin_auth: Arc<AdminAuthState>,
     db_pool: PgPool,
     redis_client: RedisClient,
     cors: CorsLayer,
@@ -178,9 +184,14 @@ fn build_router(
     } = states;
 
     // --- Config management (privileged) ---
+    // Guarded by admin authentication + authorization.
     let config_router = Router::new()
         .route("/api/config", get(handle_get_config))
         .route("/api/config/reload", post(handle_reload))
+        .route_layer(middleware::from_fn_with_state(
+            admin_auth.clone(),
+            require_admin_auth,
+        ))
         .with_state(config_manager);
 
     // --- Profiling & system status ---
@@ -228,11 +239,16 @@ fn build_router(
         .route("/templates", get(contracts::get_templates))
         .with_state(profiling_state.clone());
 
-    // --- Admin ---
+    // --- Admin (privileged) ---
+    // Guarded by admin authentication + authorization.
     let admin_router = Router::new()
         .route("/system-stats", get(admin::get_system_stats))
         .route("/maintenance", post(admin::set_maintenance_mode))
         .route("/logs", get(admin::get_admin_logs))
+        .route_layer(middleware::from_fn_with_state(
+            admin_auth,
+            require_admin_auth,
+        ))
         .with_state(profiling_state.clone());
 
     // --- Coverage ---
@@ -332,6 +348,7 @@ mod route_table_tests {
         ApplicationStates,
         Arc<ConfigManager>,
         Arc<ContractSandboxService>,
+        Arc<AdminAuthState>,
         PgPool,
         RedisClient,
     ) {
@@ -355,8 +372,16 @@ mod route_table_tests {
         let states =
             build_application_states(db_pool.clone(), redis_client.clone(), &services);
         let sandbox_service = Arc::new(ContractSandboxService::default());
+        let admin_auth = Arc::new(AdminAuthState::new());
 
-        (states, config_manager, sandbox_service, db_pool, redis_client)
+        (
+            states,
+            config_manager,
+            sandbox_service,
+            admin_auth,
+            db_pool,
+            redis_client,
+        )
     }
 
     /// Axum panics at build time when two routes overlap, so a router that
@@ -365,13 +390,14 @@ mod route_table_tests {
     /// definitions that previously coexisted in `main`.
     #[test]
     fn router_builds_with_unique_routes() {
-        let (states, config_manager, sandbox_service, db_pool, redis_client) =
+        let (states, config_manager, sandbox_service, admin_auth, db_pool, redis_client) =
             lazy_state_bundle();
 
         let _app = build_router(
             states,
             config_manager,
             sandbox_service,
+            admin_auth,
             db_pool,
             redis_client,
             CorsLayer::new(),
