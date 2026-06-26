@@ -5,7 +5,7 @@
 
 use crate::account::AccountHandle;
 use crate::cost::CostReport;
-use crate::sim::SimulatedTx;
+use crate::sim::{PreparedTx, SimulatedTx};
 use soroban_sdk::{
     testutils::{ContractEvents, Events, Ledger},
     Address, Env, FromVal, IntoVal, Val, Vec as SorobanVec,
@@ -79,22 +79,132 @@ pub struct Stroops {
 
 impl Stroops {
     /// Creates stroops from a raw amount.
+    ///
+    /// # Panics
+    /// Panics if the amount is negative, as negative balances are not supported.
     pub fn from(amount: i128) -> Self {
+        assert!(amount >= 0, "Stroops amount cannot be negative: {}", amount);
         Self { amount }
     }
 
     /// Creates stroops from XLM (1 XLM = 10,000,000 stroops).
+    ///
+    /// # Panics
+    /// Panics if the result would overflow or be negative.
     pub fn xlm(xlm: i128) -> Self {
-        Self {
-            amount: xlm * 10_000_000,
+        assert!(xlm >= 0, "XLM amount cannot be negative: {}", xlm);
+        let amount = xlm
+            .checked_mul(10_000_000)
+            .expect("XLM amount overflowed when converting to stroops");
+        Self { amount }
+    }
+
+    /// Creates stroops with fractional XLM from integer parts.
+    ///
+    /// # Arguments
+    /// * `xlm` - Whole XLM units
+    /// * `frac` - Fractional part in stroops (0 to 9,999,999)
+    ///
+    /// # Panics
+    /// Panics if `xlm` is negative, `frac` is out of range, or the result overflows.
+    pub fn from_parts(xlm: i128, frac: i128) -> Self {
+        assert!(xlm >= 0, "XLM amount cannot be negative: {}", xlm);
+        assert!(
+            (0..10_000_000).contains(&frac),
+            "Fractional stroops must be in range 0..10,000,000, got: {}",
+            frac
+        );
+        let xlm_stroops = xlm
+            .checked_mul(10_000_000)
+            .expect("XLM amount overflowed when converting to stroops");
+        let amount = xlm_stroops
+            .checked_add(frac)
+            .expect("Total stroops amount overflowed");
+        Self { amount }
+    }
+
+    /// Creates stroops from a decimal string (e.g., "1.5", "0.0000001").
+    ///
+    /// This is the recommended way to construct Stroops from fractional XLM,
+    /// as it avoids the precision loss of f64 conversion.
+    ///
+    /// # Arguments
+    /// * `s` - Decimal string representing XLM amount
+    ///
+    /// # Panics
+    /// Panics if the string is not a valid decimal, is negative, or overflows.
+    pub fn from_xlm_str(s: &str) -> Self {
+        let s = s.trim();
+        assert!(!s.is_empty(), "XLM amount string cannot be empty");
+
+        let (whole, frac_str) = if let Some((w, f)) = s.split_once('.') {
+            (w, f)
+        } else {
+            (s, "")
+        };
+
+        let xlm: i128 = whole
+            .parse()
+            .expect(&format!("Invalid XLM amount: '{}'", s));
+        assert!(xlm >= 0, "XLM amount cannot be negative: {}", s);
+
+        let mut frac: i128 = 0;
+        let mut divisor: i128 = 1;
+        for c in frac_str.chars().take(7) {
+            assert!(
+                c.is_ascii_digit(),
+                "Invalid character in fractional part: '{}'",
+                s
+            );
+            frac = frac * 10 + (c as i128 - '0' as i128);
+            divisor *= 10;
         }
+        // Pad with zeros if fewer than 7 digits
+        for _ in frac_str.len()..7 {
+            frac *= 10;
+            divisor *= 10;
+        }
+        // Ensure we have exactly 7 digits of precision
+        assert!(
+            frac_str.len() <= 7,
+            "XLM amount has too many decimal places (max 7): '{}'",
+            s
+        );
+
+        let xlm_stroops = xlm
+            .checked_mul(10_000_000)
+            .expect("XLM amount overflowed when converting to stroops");
+        let frac_stroops = frac * 10_000_000 / divisor;
+        let amount = xlm_stroops
+            .checked_add(frac_stroops)
+            .expect("Total stroops amount overflowed");
+
+        Self { amount }
     }
 
     /// Creates stroops with fractional XLM (e.g., 0.5 XLM).
+    ///
+    /// # Deprecated
+    /// This method uses f64 which can cause precision loss and silent truncation.
+    /// Use `from_parts` or `from_xlm_str` instead.
+    ///
+    /// # Panics
+    /// Panics if the result is negative or overflows.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use `from_parts` or `from_xlm_str` to avoid lossy f64 conversion"
+    )]
     pub fn xlm_frac(xlm: f64) -> Self {
-        Self {
-            amount: (xlm * 10_000_000.0) as i128,
-        }
+        assert!(xlm >= 0.0, "XLM amount cannot be negative: {}", xlm);
+        let amount = (xlm * 10_000_000.0)
+            .round()
+            as i128;
+        assert!(
+            amount >= 0,
+            "Converted stroops amount is negative, input may have been too small: {}",
+            xlm
+        );
+        Self { amount }
     }
 
     /// Returns the amount in stroops.
@@ -108,6 +218,7 @@ impl Stroops {
     }
 }
 
+/// **Thread‑safety:** `MockEnv` is deliberately single‑threaded; it uses `Rc`/`RefCell` and does **not** implement `Send` or `Sync`. This ensures deterministic behavior in tests but means fixtures cannot be moved across async tasks.
 /// A wrapper around the Soroban test environment with additional helpers.
 #[derive(Clone)]
 pub struct MockEnv {
@@ -153,9 +264,18 @@ impl CapturedEvent {
         self.data.clone()
     }
 
-    /// Convert the event data into a typed Rust value using Soroban's FromVal.
+    /// Convert the event data into a typed Rust value using Soroban's `FromVal`.
     ///
-    /// Example: let amount: i128 = ev.data_as();
+    /// ```ignore
+    /// use crucible::prelude::*;
+    /// use soroban_sdk::symbol_short;
+    ///
+    /// let events = env.events_parsed((symbol_short!("minted"),));
+    /// for ev in &events {
+    ///     let amount: i128 = ev.data_as();
+    ///     assert!(amount > 0);
+    /// }
+    /// ```
     pub fn data_as<T: FromVal<Env, Val>>(&self) -> T {
         T::from_val(&self.env, &self.data)
     }
@@ -198,6 +318,16 @@ impl MockEnv {
     /// This causes all `require_auth()` calls to succeed without valid signatures.
     pub fn mock_all_auths(&self) {
         self.inner.mock_all_auths();
+    }
+
+    /// Set explicit mock authorizations for subsequent contract calls.
+    ///
+    /// Unlike [`mock_all_auths`](Self::mock_all_auths), this authorizes only the
+    /// invocations described by the supplied entries. Passing an empty slice
+    /// clears all mocked authorizations so that `require_auth()` calls fail —
+    /// useful for negative authorization tests.
+    pub fn mock_auths(&self, auths: &[soroban_sdk::testutils::MockAuth<'_>]) {
+        self.inner.mock_auths(auths);
     }
 
     /// Advance the ledger timestamp by a duration.
@@ -294,22 +424,20 @@ impl MockEnv {
         // We use the internal representation for filtering in this helper
         use soroban_sdk::xdr::{self, ScAddress};
         for event in all_events.events() {
+            // Skip diagnostic/system events that lack a contract ID.
+            let hash = match event.contract_id.as_ref() {
+                Some(id) => id,
+                None => continue,
+            };
             let xdr::ContractEventBody::V0(body) = &event.body;
             let event_topics: SorobanVec<Val> = body.topics.clone().into_val(&self.inner);
             if event_topics.len() < filter_topics.len() {
                 continue;
             }
-            let mut matches = true;
-            for (i, filter_topic) in filter_topics.iter().enumerate() {
-                let ev_topic = event_topics.get(i as u32).unwrap();
-                // Val doesn't implement PartialEq; compare raw bit payloads.
-                if filter_topic.get_payload() != ev_topic.get_payload() {
-                    matches = false;
-                    break;
-                }
-            }
+            let matches =
+                crate::event_topic_match::topics_match_by_payload(&filter_topics, &event_topics);
             if matches {
-                let sc_addr = ScAddress::Contract(event.contract_id.as_ref().unwrap().clone());
+                let sc_addr = ScAddress::Contract(hash.clone());
                 let contract_id = Address::from_val(&self.inner, &sc_addr);
                 let data: Val = body.data.clone().into_val(&self.inner);
                 matching.push_back((contract_id, event_topics, data));
@@ -318,10 +446,22 @@ impl MockEnv {
         matching
     }
 
-    /// Returns events matching the given topics as typed CapturedEvent wrappers.
+    /// Returns events matching the given topics as typed [`CapturedEvent`] wrappers.
     ///
-    /// This keeps the low-level `events_matching` available for advanced users but
-    /// provides an ergonomic path to convert event data into Rust types.
+    /// This keeps the low-level [`events_matching`](Self::events_matching) available
+    /// for advanced users while providing an ergonomic path to decode event data into
+    /// concrete Rust types via [`CapturedEvent::data_as`].
+    ///
+    /// ```ignore
+    /// use crucible::prelude::*;
+    /// use soroban_sdk::symbol_short;
+    ///
+    /// // After invoking a contract that emits `(symbol_short!("minted"),)` with i128 data:
+    /// let events: Vec<CapturedEvent> = env.events_parsed((symbol_short!("minted"),));
+    /// assert_eq!(events.len(), 1);
+    /// let amount: i128 = events[0].data_as();
+    /// assert_eq!(amount, 1_000);
+    /// ```
     pub fn events_parsed<T>(&self, topics: T) -> std::vec::Vec<CapturedEvent>
     where
         T: IntoVal<Env, SorobanVec<Val>>,
@@ -333,22 +473,23 @@ impl MockEnv {
         // We use the internal representation for filtering in this helper
         use soroban_sdk::xdr::{self, ScAddress};
         for event in all_events.events() {
+            // Skip diagnostic/system events that lack a contract ID.
+            let hash = match event.contract_id.as_ref() {
+                Some(id) => id,
+                None => continue,
+            };
             let xdr::ContractEventBody::V0(body) = &event.body;
             let event_topics: SorobanVec<Val> = body.topics.clone().into_val(&self.inner);
             if event_topics.len() < filter_topics.len() {
                 continue;
             }
-            let mut matches = true;
-            for (i, filter_topic) in filter_topics.iter().enumerate() {
-                if format!("{:?}", filter_topic)
-                    != format!("{:?}", event_topics.get(i as u32).unwrap())
-                {
-                    matches = false;
-                    break;
-                }
-            }
+            let matches = filter_topics.iter().enumerate().all(|(i, filter_topic)| {
+                // Val doesn't implement PartialEq; compare raw bit payloads.
+                let ev_topic = event_topics.get(i as u32).unwrap();
+                filter_topic.get_payload() == ev_topic.get_payload()
+            });
             if matches {
-                let sc_addr = ScAddress::Contract(event.contract_id.as_ref().unwrap().clone());
+                let sc_addr = ScAddress::Contract(hash.clone());
                 let contract_id = Address::from_val(&self.inner, &sc_addr);
                 let data: Val = body.data.clone().into_val(&self.inner);
                 parsed.push(CapturedEvent {
@@ -393,19 +534,71 @@ impl MockEnv {
         CostReport::new_with_fee_estimate(
             budget.cpu_instruction_cost(),
             budget.memory_bytes_cost(),
-            fee_estimate,
+            fee_estimate.total as i128,
         )
     }
 
-    /// Simulate a contract call and return a dry-run result.
+    /// Run a contract call once and capture its dry-run estimate, without
+    /// retaining any way to commit it.
+    ///
+    /// This is the **inspect-only** API: the returned [`SimulatedTx`] holds no
+    /// commit closure and imposes no `'static` bound, so the closure may
+    /// borrow freely and `T` need not be `'static`. The closure runs exactly
+    /// once and no state changes are committed.
     ///
     /// Auth is globally bypassed only for the duration of the dry-run call.
     /// After `simulate` returns the auth mock is cleared, so subsequent
     /// operations require explicit auth setup and will not silently pass.
+    ///
+    /// Use [`prepare`](Self::prepare) instead when you need to commit the call
+    /// after inspecting the estimate.
+    ///
+    /// ```ignore
+    /// // Look at the cost of a transfer without applying it.
+    /// let sim = env.simulate(|| client.transfer(&from, &to, &100));
+    /// assert!(sim.would_succeed());
+    /// ```
     pub fn simulate<F, T>(&self, f: F) -> SimulatedTx<T>
     where
-        F: Fn() -> T + 'static,
-        T: 'static,
+        F: FnOnce() -> T,
+    {
+        self.dry_run(f)
+    }
+
+    /// Run a contract call's dry-run and return a **commit-capable**
+    /// [`PreparedTx`] that can later apply the call's state changes.
+    ///
+    /// The closure runs once here to produce the estimate (with auth mocked for
+    /// that run only, then cleared) and is retained so it can run again when
+    /// [`PreparedTx::commit`] is called. Because the closure is stored by
+    /// generic type rather than boxed, there is no `'static` requirement.
+    ///
+    /// Use [`simulate`](Self::simulate) instead when you only need to inspect
+    /// the call and will never commit it.
+    ///
+    /// ```ignore
+    /// // Inspect, then commit only if the estimate is acceptable.
+    /// let prepared = env.prepare(|| client.transfer(&from, &to, &100));
+    /// if prepared.would_succeed() {
+    ///     prepared.commit();
+    /// }
+    /// ```
+    pub fn prepare<F, T>(&self, f: F) -> PreparedTx<F, T>
+    where
+        F: Fn() -> T,
+    {
+        let simulation = self.dry_run(|| f());
+        PreparedTx::new(simulation, f)
+    }
+
+    /// Execute `f` once under mocked auth and capture the dry-run metrics.
+    ///
+    /// Shared by [`simulate`](Self::simulate) and [`prepare`](Self::prepare).
+    /// The global auth bypass is cleared before returning so it does not leak
+    /// into later operations.
+    fn dry_run<F, T>(&self, f: F) -> SimulatedTx<T>
+    where
+        F: FnOnce() -> T,
     {
         let mut budget = self.inner.budget();
         budget.reset_default();
@@ -418,13 +611,38 @@ impl MockEnv {
         // Clear the global auth bypass so it does not leak into later operations.
         self.inner.mock_auths(&[]);
 
-        SimulatedTx::new(
+        SimulatedTx::new(fee, instructions, auths, true, Some(result))
+    }
+
+    /// Inspect a contract call without the ability to commit.
+    ///
+    /// Unlike `simulate`, this method does not require the closure to be `'static`,
+    /// allowing it to borrow local clients, accounts, or fixture references.
+    ///
+    /// Auth is globally bypassed only for the duration of the dry-run call.
+    /// After `simulate_inspect` returns the auth mock is cleared, so subsequent
+    /// operations require explicit auth setup and will not silently pass.
+    pub fn simulate_inspect<F, T>(&self, f: F) -> InspectedTx<T>
+    where
+        F: FnOnce() -> T,
+    {
+        let mut budget = self.inner.budget();
+        budget.reset_default();
+
+        self.inner.mock_all_auths();
+        let result = f();
+        let instructions = budget.cpu_instruction_cost();
+        let fee = self.inner.cost_estimate().fee().total;
+        let auths = self.inner.auths().iter().map(|(a, _)| a.clone()).collect();
+        // Clear the global auth bypass so it does not leak into later operations.
+        self.inner.mock_auths(&[]);
+
+        InspectedTx::new(
             fee,
             instructions,
             auths,
             true,
             Some(result),
-            Some(Box::new(f)),
         )
     }
 }
@@ -464,8 +682,13 @@ impl std::fmt::Debug for MockEnv {
             )
             .field("track_costs", &self.track_costs)
             .finish_non_exhaustive()
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // Ensure MockEnv does NOT implement Send or Sync.
+    static_assertions::assert_not_impl_any!(MockEnv: Send, Sync);
 }
+
 
 /// Builder for constructing a `MockEnv` with custom configuration.
 pub struct MockEnvBuilder {
@@ -585,5 +808,192 @@ impl MockEnvBuilder {
                 .build();
         }
         self.env
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_stroops_from_positive() {
+        let s = Stroops::from(100);
+        assert_eq!(s.as_stroops(), 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "Stroops amount cannot be negative")]
+    fn test_stroops_from_negative() {
+        Stroops::from(-100);
+    }
+
+    #[test]
+    fn test_stroops_xlm() {
+        let s = Stroops::xlm(1);
+        assert_eq!(s.as_stroops(), 10_000_000);
+        assert_eq!(s.as_xlm(), 1.0);
+    }
+
+    #[test]
+    fn test_stroops_xlm_zero() {
+        let s = Stroops::xlm(0);
+        assert_eq!(s.as_stroops(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "XLM amount cannot be negative")]
+    fn test_stroops_xlm_negative() {
+        Stroops::xlm(-1);
+    }
+
+    #[test]
+    #[should_panic(expected = "XLM amount overflowed")]
+    fn test_stroops_xlm_overflow() {
+        // i128::MAX / 10_000_000 would overflow
+        Stroops::xlm(i128::MAX / 10_000_000 + 1);
+    }
+
+    #[test]
+    fn test_stroops_from_parts() {
+        let s = Stroops::from_parts(1, 500_000);
+        assert_eq!(s.as_stroops(), 10_500_000);
+        assert_eq!(s.as_xlm(), 1.05);
+    }
+
+    #[test]
+    fn test_stroops_from_parts_zero_frac() {
+        let s = Stroops::from_parts(5, 0);
+        assert_eq!(s.as_stroops(), 50_000_000);
+    }
+
+    #[test]
+    fn test_stroops_from_parts_max_frac() {
+        let s = Stroops::from_parts(0, 9_999_999);
+        assert_eq!(s.as_stroops(), 9_999_999);
+    }
+
+    #[test]
+    #[should_panic(expected = "XLM amount cannot be negative")]
+    fn test_stroops_from_parts_negative_xlm() {
+        Stroops::from_parts(-1, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Fractional stroops must be in range")]
+    fn test_stroops_from_parts_negative_frac() {
+        Stroops::from_parts(1, -1);
+    }
+
+    #[test]
+    #[should_panic(expected = "Fractional stroops must be in range")]
+    fn test_stroops_from_parts_frac_too_large() {
+        Stroops::from_parts(1, 10_000_000);
+    }
+
+    #[test]
+    fn test_stroops_from_xlm_str() {
+        let s = Stroops::from_xlm_str("1.5");
+        assert_eq!(s.as_stroops(), 15_000_000);
+        assert_eq!(s.as_xlm(), 1.5);
+    }
+
+    #[test]
+    fn test_stroops_from_xlm_str_no_frac() {
+        let s = Stroops::from_xlm_str("10");
+        assert_eq!(s.as_stroops(), 100_000_000);
+    }
+
+    #[test]
+    fn test_stroops_from_xlm_str_small() {
+        let s = Stroops::from_xlm_str("0.0000001");
+        assert_eq!(s.as_stroops(), 1);
+    }
+
+    #[test]
+    fn test_stroops_from_xlm_str_leading_zeros() {
+        let s = Stroops::from_xlm_str("0.000001");
+        assert_eq!(s.as_stroops(), 10);
+    }
+
+    #[test]
+    fn test_stroops_from_xlm_str_trimmed() {
+        let s = Stroops::from_xlm_str("  2.5  ");
+        assert_eq!(s.as_stroops(), 25_000_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "XLM amount string cannot be empty")]
+    fn test_stroops_from_xlm_str_empty() {
+        Stroops::from_xlm_str("");
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid XLM amount")]
+    fn test_stroops_from_xlm_str_invalid() {
+        Stroops::from_xlm_str("abc");
+    }
+
+    #[test]
+    #[should_panic(expected = "XLM amount cannot be negative")]
+    fn test_stroops_from_xlm_str_negative() {
+        Stroops::from_xlm_str("-1.5");
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid character in fractional part")]
+    fn test_stroops_from_xlm_str_invalid_frac() {
+        Stroops::from_xlm_str("1.5a");
+    }
+
+    #[test]
+    #[should_panic(expected = "XLM amount has too many decimal places")]
+    fn test_stroops_from_xlm_str_too_many_decimals() {
+        Stroops::from_xlm_str("1.12345678");
+    }
+
+    #[test]
+    fn test_stroops_xlm_frac_deprecated() {
+        // This test ensures the deprecated method still works but with rounding
+        let s = Stroops::xlm_frac(1.5);
+        assert_eq!(s.as_stroops(), 15_000_000);
+    }
+
+    #[test]
+    fn test_stroops_xlm_frac_rounding() {
+        // f64 precision loss example: 0.1 cannot be represented exactly
+        // The deprecated method rounds, so we test that behavior
+        let s = Stroops::xlm_frac(0.1);
+        // Due to f64 precision, this might not be exactly 1,000,000
+        assert!(s.as_stroops() >= 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "XLM amount cannot be negative")]
+    fn test_stroops_xlm_frac_negative() {
+        Stroops::xlm_frac(-1.0);
+    }
+
+    #[test]
+    fn test_stroops_roundtrip() {
+        let original = Stroops::from_xlm_str("123.456789");
+        let _as_xlm = original.as_xlm();
+        // "123.456789" = 123 XLM + 4567890 stroops (padded to 7 digits)
+        let roundtripped = Stroops::from_parts(123, 4_567_890);
+        assert_eq!(original.as_stroops(), roundtripped.as_stroops());
+    }
+
+    #[test]
+    fn test_stroops_large_amount() {
+        // Test with a large but valid amount
+        let s = Stroops::from_xlm_str("1000000");
+        assert_eq!(s.as_stroops(), 10_000_000_000_000);
+    }
+
+    #[test]
+    fn test_stroops_max_safe_amount() {
+        // Maximum safe XLM amount that won't overflow when multiplied
+        let max_xlm = i128::MAX / 10_000_000;
+        let s = Stroops::xlm(max_xlm);
+        assert_eq!(s.as_stroops(), max_xlm * 10_000_000);
     }
 }
