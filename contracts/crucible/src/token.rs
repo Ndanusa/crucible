@@ -302,7 +302,7 @@ impl MockToken {
         let client = TokenClient::new(&self.env, &self.address);
         client.transfer(from, to, &amount);
     }
-    
+
     /// Transfers tokens from one account to another using an allowance (spender flow).
     ///
     /// # Arguments

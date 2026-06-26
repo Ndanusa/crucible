@@ -299,15 +299,8 @@ impl MockEnv {
             if event_topics.len() < filter_topics.len() {
                 continue;
             }
-            let mut matches = true;
-            for (i, filter_topic) in filter_topics.iter().enumerate() {
-                let ev_topic = event_topics.get(i as u32).unwrap();
-                // Val doesn't implement PartialEq; compare raw bit payloads.
-                if filter_topic.get_payload() != ev_topic.get_payload() {
-                    matches = false;
-                    break;
-                }
-            }
+            let matches =
+                crate::event_topic_match::topics_match_by_payload(&filter_topics, &event_topics);
             if matches {
                 let sc_addr = ScAddress::Contract(event.contract_id.as_ref().unwrap().clone());
                 let contract_id = Address::from_val(&self.inner, &sc_addr);
@@ -338,15 +331,11 @@ impl MockEnv {
             if event_topics.len() < filter_topics.len() {
                 continue;
             }
-            let mut matches = true;
-            for (i, filter_topic) in filter_topics.iter().enumerate() {
-                if format!("{:?}", filter_topic)
-                    != format!("{:?}", event_topics.get(i as u32).unwrap())
-                {
-                    matches = false;
-                    break;
-                }
-            }
+            let matches = filter_topics.iter().enumerate().all(|(i, filter_topic)| {
+                // Val doesn't implement PartialEq; compare raw bit payloads.
+                let ev_topic = event_topics.get(i as u32).unwrap();
+                filter_topic.get_payload() == ev_topic.get_payload()
+            });
             if matches {
                 let sc_addr = ScAddress::Contract(event.contract_id.as_ref().unwrap().clone());
                 let contract_id = Address::from_val(&self.inner, &sc_addr);

@@ -60,15 +60,25 @@ impl CostReport {
     pub fn report(&self) -> String {
         let instructions_str = format_with_commas(self.instructions);
         let memory_str = format_with_commas(self.memory);
-        let fee_str = format!("{} str", self.fee_stroops());
+
+        let source_suffix = if self.uses_sdk_fee_estimate() {
+            " (SDK)"
+        } else {
+            ""
+        };
+        let fee_str = format!("{} str{}", self.fee_stroops(), source_suffix);
+
         let mut output = String::new();
-        output.push_str("+---------------------+-----------+\n");
-        output.push_str("| Metric              | Value     |\n");
-        output.push_str("+---------------------+-----------+\n");
-        output.push_str(&format!("| Instructions        | {:>9} |\n", instructions_str));
-        output.push_str(&format!("| Memory (bytes)      | {:>9} |\n", memory_str));
-        output.push_str(&format!("| Estimated fee       | {:>9} |\n", fee_str));
-        output.push_str("+---------------------+-----------+");
+        output.push_str("+---------------------+---------------------+\n");
+        output.push_str("| Metric              | Value               |\n");
+        output.push_str("+---------------------+---------------------+\n");
+        output.push_str(&format!(
+            "| Instructions        | {:>19} |\n",
+            instructions_str
+        ));
+        output.push_str(&format!("| Memory (bytes)      | {:>19} |\n", memory_str));
+        output.push_str(&format!("| Estimated fee       | {:>19} |\n", fee_str));
+        output.push_str("+---------------------+---------------------+");
         output
     }
 
@@ -80,7 +90,12 @@ impl CostReport {
     pub fn report_plain(&self) -> String {
         let instructions_str = format_with_commas(self.instructions);
         let memory_str = format_with_commas(self.memory);
-        let fee_str = format!("{} str", self.fee_stroops());
+        let source_suffix = if self.uses_sdk_fee_estimate() {
+            " (SDK)"
+        } else {
+            ""
+        };
+        let fee_str = format!("{} str{}", self.fee_stroops(), source_suffix);
 
         format!(
             "Metric | Value\n\
@@ -131,8 +146,7 @@ impl CostReport {
         use std::fs;
         use std::path::PathBuf;
 
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-            .unwrap_or_else(|_| ".".to_string());
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
         let snap_dir = PathBuf::from(&manifest_dir)
             .join("test_snapshots")
             .join("cost");
@@ -171,8 +185,20 @@ impl CostReport {
         let saved: CostSnapshot = serde_json::from_str(&contents)
             .unwrap_or_else(|e| panic!("failed to parse snapshot '{}': {}", name, e));
 
-        check_within_tolerance("instructions", saved.instructions, self.instructions, tolerance, name);
-        check_within_tolerance("memory_bytes", saved.memory_bytes, self.memory, tolerance, name);
+        check_within_tolerance(
+            "instructions",
+            saved.instructions,
+            self.instructions,
+            tolerance,
+            name,
+        );
+        check_within_tolerance(
+            "memory_bytes",
+            saved.memory_bytes,
+            self.memory,
+            tolerance,
+            name,
+        );
     }
 }
 
