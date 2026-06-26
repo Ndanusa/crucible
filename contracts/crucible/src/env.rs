@@ -153,9 +153,18 @@ impl CapturedEvent {
         self.data.clone()
     }
 
-    /// Convert the event data into a typed Rust value using Soroban's FromVal.
+    /// Convert the event data into a typed Rust value using Soroban's `FromVal`.
     ///
-    /// Example: let amount: i128 = ev.data_as();
+    /// ```ignore
+    /// use crucible::prelude::*;
+    /// use soroban_sdk::symbol_short;
+    ///
+    /// let events = env.events_parsed((symbol_short!("minted"),));
+    /// for ev in &events {
+    ///     let amount: i128 = ev.data_as();
+    ///     assert!(amount > 0);
+    /// }
+    /// ```
     pub fn data_as<T: FromVal<Env, Val>>(&self) -> T {
         T::from_val(&self.env, &self.data)
     }
@@ -318,10 +327,22 @@ impl MockEnv {
         matching
     }
 
-    /// Returns events matching the given topics as typed CapturedEvent wrappers.
+    /// Returns events matching the given topics as typed [`CapturedEvent`] wrappers.
     ///
-    /// This keeps the low-level `events_matching` available for advanced users but
-    /// provides an ergonomic path to convert event data into Rust types.
+    /// This keeps the low-level [`events_matching`](Self::events_matching) available
+    /// for advanced users while providing an ergonomic path to decode event data into
+    /// concrete Rust types via [`CapturedEvent::data_as`].
+    ///
+    /// ```ignore
+    /// use crucible::prelude::*;
+    /// use soroban_sdk::symbol_short;
+    ///
+    /// // After invoking a contract that emits `(symbol_short!("minted"),)` with i128 data:
+    /// let events: Vec<CapturedEvent> = env.events_parsed((symbol_short!("minted"),));
+    /// assert_eq!(events.len(), 1);
+    /// let amount: i128 = events[0].data_as();
+    /// assert_eq!(amount, 1_000);
+    /// ```
     pub fn events_parsed<T>(&self, topics: T) -> std::vec::Vec<CapturedEvent>
     where
         T: IntoVal<Env, SorobanVec<Val>>,
@@ -585,5 +606,74 @@ impl MockEnvBuilder {
                 .build();
         }
         self.env
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::prelude::*;
+    use soroban_sdk::{contract, contractimpl, symbol_short, Env};
+
+    // Minimal contract that emits a typed event so we can test events_parsed
+    // through the prelude without depending on any example crate.
+    #[contract]
+    #[derive(Default)]
+    struct EventEmitter;
+
+    #[contractimpl]
+    impl EventEmitter {
+        pub fn emit_transfer(env: Env, amount: i128) {
+            env.events().publish((symbol_short!("transfer"),), amount);
+        }
+
+        pub fn emit_mint(env: Env, amount: i128) {
+            env.events().publish((symbol_short!("minted"),), amount);
+        }
+    }
+
+    #[test]
+    fn test_events_parsed_available_from_prelude() {
+        // CapturedEvent must be nameable via the prelude alone.
+        let env = MockEnv::builder().with_contract::<EventEmitter>().build();
+        let id = env.contract_id::<EventEmitter>();
+        let client = EventEmitterClient::new(env.inner(), &id);
+
+        client.emit_transfer(&1_000_i128);
+        client.emit_mint(&500_i128);
+
+        // Only the "transfer" event should be returned.
+        let events: std::vec::Vec<CapturedEvent> = env.events_parsed((symbol_short!("transfer"),));
+        assert_eq!(events.len(), 1);
+
+        let amount: i128 = events[0].data_as();
+        assert_eq!(amount, 1_000);
+    }
+
+    #[test]
+    fn test_events_parsed_typed_extraction() {
+        let env = MockEnv::builder().with_contract::<EventEmitter>().build();
+        let id = env.contract_id::<EventEmitter>();
+        let client = EventEmitterClient::new(env.inner(), &id);
+
+        client.emit_mint(&42_i128);
+
+        let events: std::vec::Vec<CapturedEvent> = env.events_parsed((symbol_short!("minted"),));
+        assert_eq!(events.len(), 1);
+
+        let amount: i128 = events[0].data_as();
+        assert_eq!(amount, 42);
+        assert_eq!(events[0].contract(), id);
+    }
+
+    #[test]
+    fn test_events_parsed_no_match_returns_empty() {
+        let env = MockEnv::builder().with_contract::<EventEmitter>().build();
+        let id = env.contract_id::<EventEmitter>();
+        let client = EventEmitterClient::new(env.inner(), &id);
+
+        client.emit_transfer(&1_i128);
+
+        let events: std::vec::Vec<CapturedEvent> = env.events_parsed((symbol_short!("minted"),));
+        assert!(events.is_empty());
     }
 }

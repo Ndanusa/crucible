@@ -6,6 +6,7 @@
 pub use crate::account::AccountBuilder;
 pub use crate::account::AccountHandle;
 pub use crate::cost::CostReport;
+pub use crate::env::CapturedEvent;
 pub use crate::env::Duration;
 pub use crate::env::MockEnv;
 pub use crate::env::MockEnvBuilder;
