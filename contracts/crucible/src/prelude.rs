@@ -11,7 +11,7 @@ pub use crate::env::Duration;
 pub use crate::env::MockEnv;
 pub use crate::env::MockEnvBuilder;
 pub use crate::env::Stroops;
-pub use crate::sim::InspectedTx;
+pub use crate::sim::PreparedTx;
 pub use crate::sim::SimulatedTx;
 pub use crate::token::MockToken;
 
