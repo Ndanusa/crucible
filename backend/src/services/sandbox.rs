@@ -347,6 +347,8 @@ impl ContractExecutor for SorobanContractExecutor {
 
         let args = decode_args(&env, &execution.args_xdr)?;
         let wasm = Bytes::from_slice(&env, &execution.wasm);
+        // Using register_contract_wasm is currently the only straightforward way
+        // to dynamically register an arbitrary WASM blob in the sandbox execution environment.
         #[allow(deprecated)]
         let contract_id = env.register_contract_wasm(None, wasm);
         let symbol = Symbol::new(&env, &execution.function);

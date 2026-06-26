@@ -1,4 +1,3 @@
-#![allow(deprecated)]
 pub use soroban_sdk;
 pub mod account;
 pub mod cost;

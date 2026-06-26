@@ -106,7 +106,7 @@ impl<'env> AccountBuilder<'env> {
         let address = self
             .env
             .inner()
-            .register_contract(None, soroban_sdk::testutils::MockAuthContract {});
+            .register(soroban_sdk::testutils::MockAuthContract {}, ());
 
         // 2. Fund XLM if requested
         if self.xlm_balance.as_stroops() > 0 {
