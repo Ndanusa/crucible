@@ -173,12 +173,39 @@ impl CostReport {
 
         check_within_tolerance("instructions", saved.instructions, self.instructions, tolerance, name);
         check_within_tolerance("memory_bytes", saved.memory_bytes, self.memory, tolerance, name);
+        check_i64_within_tolerance(
+            "fee_stroops",
+            saved.fee_stroops,
+            self.fee_stroops(),
+            tolerance,
+            name,
+        );
     }
 }
 
 #[cfg(feature = "snapshots")]
 fn check_within_tolerance(metric: &str, saved: u64, current: u64, tolerance: f64, name: &str) {
     if saved == 0 {
+        return;
+    }
+    let ratio = current as f64 / saved as f64;
+    if ratio > 1.0 + tolerance {
+        panic!(
+            "cost regression in snapshot '{}': {} increased from {} to {} ({:.1}% > {:.1}% tolerance)",
+            name, metric, saved, current, (ratio - 1.0) * 100.0, tolerance * 100.0,
+        );
+    }
+}
+
+#[cfg(feature = "snapshots")]
+fn check_i64_within_tolerance(metric: &str, saved: i64, current: i64, tolerance: f64, name: &str) {
+    if saved == 0 {
+        if current != 0 {
+            panic!(
+                "cost regression in snapshot '{}': {} changed from {} to {}",
+                name, metric, saved, current,
+            );
+        }
         return;
     }
     let ratio = current as f64 / saved as f64;
@@ -267,6 +294,111 @@ mod tests {
             let parsed: super::CostSnapshot = serde_json::from_str(&json).unwrap();
             assert_eq!(parsed.instructions, 1000);
             assert_eq!(parsed.memory_bytes, 2000);
+            assert_eq!(parsed.fee_stroops, 10);
         }
+    }
+
+    #[cfg(feature = "snapshots")]
+    fn sample_fee_estimate(total: i64) -> FeeEstimate {
+        FeeEstimate {
+            total,
+            instructions: 0,
+            disk_read_entries: 0,
+            write_entries: 0,
+            disk_read_bytes: 0,
+            write_bytes: 0,
+            contract_events: 0,
+            persistent_entry_rent: 0,
+            temporary_entry_rent: 0,
+        }
+    }
+
+    #[cfg(feature = "snapshots")]
+    #[test]
+    fn test_check_i64_within_tolerance_allows_small_fee_increase() {
+        super::check_i64_within_tolerance("fee_stroops", 100, 104, 0.05, "test");
+    }
+
+    #[cfg(feature = "snapshots")]
+    #[test]
+    #[should_panic(expected = "cost regression in snapshot 'test': fee_stroops increased")]
+    fn test_check_i64_within_tolerance_panics_on_fee_regression() {
+        super::check_i64_within_tolerance("fee_stroops", 100, 200, 0.05, "test");
+    }
+
+    #[cfg(feature = "snapshots")]
+    #[test]
+    fn test_snapshot_compares_fee_stroops_when_instructions_unchanged() {
+        use std::fs;
+        use std::path::PathBuf;
+
+        let snap_name = "fee_comparison_pass";
+        let snap_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("test_snapshots")
+            .join("cost");
+        let snap_path = snap_dir.join(format!("{snap_name}.json"));
+
+        fs::create_dir_all(&snap_dir).unwrap();
+        let snapshot = super::CostSnapshot {
+            name: snap_name.to_string(),
+            instructions: 10_000,
+            memory_bytes: 5_000,
+            fee_stroops: 42,
+        };
+        fs::write(
+            &snap_path,
+            serde_json::to_string_pretty(&snapshot).unwrap(),
+        )
+        .unwrap();
+
+        let report = CostReport::new_with_fee_estimate(
+            10_000,
+            5_000,
+            sample_fee_estimate(42),
+        );
+        report.assert_snapshot_with_tolerance(snap_name, 0.05);
+
+        fs::remove_file(snap_path).unwrap();
+    }
+
+    #[cfg(feature = "snapshots")]
+    #[test]
+    fn test_snapshot_fee_regression_fails_when_instructions_unchanged() {
+        use std::fs;
+        use std::path::PathBuf;
+
+        let snap_name = "fee_comparison_fail";
+        let snap_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("test_snapshots")
+            .join("cost");
+        let snap_path = snap_dir.join(format!("{snap_name}.json"));
+
+        fs::create_dir_all(&snap_dir).unwrap();
+        let snapshot = super::CostSnapshot {
+            name: snap_name.to_string(),
+            instructions: 10_000,
+            memory_bytes: 5_000,
+            fee_stroops: 100,
+        };
+        fs::write(
+            &snap_path,
+            serde_json::to_string_pretty(&snapshot).unwrap(),
+        )
+        .unwrap();
+
+        let report = CostReport::new_with_fee_estimate(
+            10_000,
+            5_000,
+            sample_fee_estimate(200),
+        );
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            report.assert_snapshot_with_tolerance(snap_name, 0.05);
+        }));
+        assert!(
+            result.is_err(),
+            "expected fee-only regression to fail snapshot comparison"
+        );
+
+        fs::remove_file(snap_path).unwrap();
     }
 }
