@@ -1,7 +1,5 @@
 use soroban_sdk::testutils::ContractFunctionSet;
-use soroban_sdk::{
-    contracttype, symbol_short, Address, Env, Symbol, TryFromVal, TryIntoVal, Val,
-};
+use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, TryFromVal, TryIntoVal, Val};
 
 #[contracttype]
 #[derive(Clone)]
@@ -79,20 +77,10 @@ impl ReputationContract {
     }
 }
 
-impl Default for ReputationContract {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ContractFunctionSet for ReputationContract {
     fn call(&self, func: &str, env: Env, args: &[Val]) -> Option<Val> {
-        let addr = |i: usize| -> Option<Address> {
-            Address::try_from_val(&env, args.get(i)?).ok()
-        };
-        let int = |i: usize| -> Option<i32> {
-            i32::try_from_val(&env, args.get(i)?).ok()
-        };
+        let addr = |i: usize| -> Option<Address> { Address::try_from_val(&env, args.get(i)?).ok() };
+        let int = |i: usize| -> Option<i32> { i32::try_from_val(&env, args.get(i)?).ok() };
 
         match func {
             "initialize" => {
@@ -202,7 +190,10 @@ mod test {
         let address = env.register(ReputationContract, ());
         env.as_contract(&address, || {
             ReputationContract.initialize(env.clone(), admin.clone());
-            assert_eq!(ReputationContract.get_reputation(env.clone(), user.clone()), 0);
+            assert_eq!(
+                ReputationContract.get_reputation(env.clone(), user.clone()),
+                0
+            );
         });
     }
 }

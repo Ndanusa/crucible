@@ -67,31 +67,31 @@ macro_rules! assert_emitted {
     ($env:expr, $contract_id:expr, $topics:expr, $data:expr) => {{
         use soroban_sdk::testutils::Events as _;
         use soroban_sdk::IntoVal as _;
-        use soroban_sdk::xdr;
+        use soroban_sdk::TryFromVal as _;
         let __env = $env.inner();
         let __all = __env.events().all();
+        let __want_contract: soroban_sdk::Address = $contract_id.clone();
         let __want_topics: soroban_sdk::Vec<soroban_sdk::Val> = ($topics).into_val(__env);
         let __want_data: soroban_sdk::Val = ($data).into_val(__env);
-        let __want_contract: soroban_sdk::Address = $contract_id.clone();
-        let __found = __all.events().iter().any(|ev| {
-            let xdr::ContractEventBody::V0(body) = &ev.body;
-            let Some(ref cid) = ev.contract_id else { return false };
-            let sc_addr = xdr::ScAddress::Contract(cid.clone());
-            let ev_contract = soroban_sdk::Address::from_val(__env, &sc_addr);
-            if ev_contract != __want_contract {
-                return false;
-            }
-            let ev_topics: soroban_sdk::Vec<soroban_sdk::Val> =
-                body.topics.clone().into_val(__env);
-            let ev_data: soroban_sdk::Val = body.data.clone().into_val(__env);
-            ev_topics == __want_topics && ev_data == __want_data
+        let __want_data_xdr =
+            soroban_sdk::xdr::ScVal::try_from_val(__env, &__want_data).unwrap();
+        let __want_topics_xdr: soroban_sdk::xdr::VecM<soroban_sdk::xdr::ScVal> = __want_topics
+            .iter()
+            .map(|v| soroban_sdk::xdr::ScVal::try_from_val(__env, &v).unwrap())
+            .collect::<std::vec::Vec<_>>()
+            .try_into()
+            .unwrap();
+        let __filtered = __all.filter_by_contract(&__want_contract);
+        let __found = __filtered.events().iter().any(|ev| {
+            let soroban_sdk::xdr::ContractEventBody::V0(ref body) = ev.body;
+            body.topics == __want_topics_xdr && body.data == __want_data_xdr
         });
         assert!(
             __found,
             "Expected event not found.\n  contract: {:?}\n  topics:   {:?}\n  data:     {:?}\n  actual events: {:?}",
             __want_contract,
             __want_topics,
-            __want_data,
+            __want_data_xdr,
             __all,
         );
     }};
@@ -126,15 +126,14 @@ mod tests {
 
     // A minimal contract that publishes two events in one call.
     #[contract]
+    #[derive(Default)]
     struct MultiEventContract;
 
     #[contractimpl]
     impl MultiEventContract {
         pub fn fire_two(env: Env) {
-            env.events()
-                .publish((symbol_short!("first"),), 1_u32);
-            env.events()
-                .publish((symbol_short!("second"),), 2_u32);
+            env.events().publish((symbol_short!("first"),), 1_u32);
+            env.events().publish((symbol_short!("second"),), 2_u32);
         }
     }
 
