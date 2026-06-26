@@ -5,7 +5,7 @@
 
 use crate::account::AccountHandle;
 use crate::cost::CostReport;
-use crate::sim::SimulatedTx;
+use crate::sim::{PreparedTx, SimulatedTx};
 use soroban_sdk::{
     testutils::{ContractEvents, Events, Ledger},
     Address, Env, FromVal, IntoVal, Val, Vec as SorobanVec,
@@ -218,6 +218,7 @@ impl Stroops {
     }
 }
 
+/// **Thread‑safety:** `MockEnv` is deliberately single‑threaded; it uses `Rc`/`RefCell` and does **not** implement `Send` or `Sync`. This ensures deterministic behavior in tests but means fixtures cannot be moved across async tasks.
 /// A wrapper around the Soroban test environment with additional helpers.
 #[derive(Clone)]
 pub struct MockEnv {
@@ -263,9 +264,18 @@ impl CapturedEvent {
         self.data.clone()
     }
 
-    /// Convert the event data into a typed Rust value using Soroban's FromVal.
+    /// Convert the event data into a typed Rust value using Soroban's `FromVal`.
     ///
-    /// Example: let amount: i128 = ev.data_as();
+    /// ```ignore
+    /// use crucible::prelude::*;
+    /// use soroban_sdk::symbol_short;
+    ///
+    /// let events = env.events_parsed((symbol_short!("minted"),));
+    /// for ev in &events {
+    ///     let amount: i128 = ev.data_as();
+    ///     assert!(amount > 0);
+    /// }
+    /// ```
     pub fn data_as<T: FromVal<Env, Val>>(&self) -> T {
         T::from_val(&self.env, &self.data)
     }
@@ -308,6 +318,16 @@ impl MockEnv {
     /// This causes all `require_auth()` calls to succeed without valid signatures.
     pub fn mock_all_auths(&self) {
         self.inner.mock_all_auths();
+    }
+
+    /// Set explicit mock authorizations for subsequent contract calls.
+    ///
+    /// Unlike [`mock_all_auths`](Self::mock_all_auths), this authorizes only the
+    /// invocations described by the supplied entries. Passing an empty slice
+    /// clears all mocked authorizations so that `require_auth()` calls fail —
+    /// useful for negative authorization tests.
+    pub fn mock_auths(&self, auths: &[soroban_sdk::testutils::MockAuth<'_>]) {
+        self.inner.mock_auths(auths);
     }
 
     /// Advance the ledger timestamp by a duration.
@@ -404,22 +424,20 @@ impl MockEnv {
         // We use the internal representation for filtering in this helper
         use soroban_sdk::xdr::{self, ScAddress};
         for event in all_events.events() {
+            // Skip diagnostic/system events that lack a contract ID.
+            let hash = match event.contract_id.as_ref() {
+                Some(id) => id,
+                None => continue,
+            };
             let xdr::ContractEventBody::V0(body) = &event.body;
             let event_topics: SorobanVec<Val> = body.topics.clone().into_val(&self.inner);
             if event_topics.len() < filter_topics.len() {
                 continue;
             }
-            let mut matches = true;
-            for (i, filter_topic) in filter_topics.iter().enumerate() {
-                let ev_topic = event_topics.get(i as u32).unwrap();
-                // Val doesn't implement PartialEq; compare raw bit payloads.
-                if filter_topic.get_payload() != ev_topic.get_payload() {
-                    matches = false;
-                    break;
-                }
-            }
+            let matches =
+                crate::event_topic_match::topics_match_by_payload(&filter_topics, &event_topics);
             if matches {
-                let sc_addr = ScAddress::Contract(event.contract_id.as_ref().unwrap().clone());
+                let sc_addr = ScAddress::Contract(hash.clone());
                 let contract_id = Address::from_val(&self.inner, &sc_addr);
                 let data: Val = body.data.clone().into_val(&self.inner);
                 matching.push_back((contract_id, event_topics, data));
@@ -428,10 +446,22 @@ impl MockEnv {
         matching
     }
 
-    /// Returns events matching the given topics as typed CapturedEvent wrappers.
+    /// Returns events matching the given topics as typed [`CapturedEvent`] wrappers.
     ///
-    /// This keeps the low-level `events_matching` available for advanced users but
-    /// provides an ergonomic path to convert event data into Rust types.
+    /// This keeps the low-level [`events_matching`](Self::events_matching) available
+    /// for advanced users while providing an ergonomic path to decode event data into
+    /// concrete Rust types via [`CapturedEvent::data_as`].
+    ///
+    /// ```ignore
+    /// use crucible::prelude::*;
+    /// use soroban_sdk::symbol_short;
+    ///
+    /// // After invoking a contract that emits `(symbol_short!("minted"),)` with i128 data:
+    /// let events: Vec<CapturedEvent> = env.events_parsed((symbol_short!("minted"),));
+    /// assert_eq!(events.len(), 1);
+    /// let amount: i128 = events[0].data_as();
+    /// assert_eq!(amount, 1_000);
+    /// ```
     pub fn events_parsed<T>(&self, topics: T) -> std::vec::Vec<CapturedEvent>
     where
         T: IntoVal<Env, SorobanVec<Val>>,
@@ -443,22 +473,23 @@ impl MockEnv {
         // We use the internal representation for filtering in this helper
         use soroban_sdk::xdr::{self, ScAddress};
         for event in all_events.events() {
+            // Skip diagnostic/system events that lack a contract ID.
+            let hash = match event.contract_id.as_ref() {
+                Some(id) => id,
+                None => continue,
+            };
             let xdr::ContractEventBody::V0(body) = &event.body;
             let event_topics: SorobanVec<Val> = body.topics.clone().into_val(&self.inner);
             if event_topics.len() < filter_topics.len() {
                 continue;
             }
-            let mut matches = true;
-            for (i, filter_topic) in filter_topics.iter().enumerate() {
-                if format!("{:?}", filter_topic)
-                    != format!("{:?}", event_topics.get(i as u32).unwrap())
-                {
-                    matches = false;
-                    break;
-                }
-            }
+            let matches = filter_topics.iter().enumerate().all(|(i, filter_topic)| {
+                // Val doesn't implement PartialEq; compare raw bit payloads.
+                let ev_topic = event_topics.get(i as u32).unwrap();
+                filter_topic.get_payload() == ev_topic.get_payload()
+            });
             if matches {
-                let sc_addr = ScAddress::Contract(event.contract_id.as_ref().unwrap().clone());
+                let sc_addr = ScAddress::Contract(hash.clone());
                 let contract_id = Address::from_val(&self.inner, &sc_addr);
                 let data: Val = body.data.clone().into_val(&self.inner);
                 parsed.push(CapturedEvent {
@@ -507,15 +538,67 @@ impl MockEnv {
         )
     }
 
-    /// Simulate a contract call and return a dry-run result.
+    /// Run a contract call once and capture its dry-run estimate, without
+    /// retaining any way to commit it.
+    ///
+    /// This is the **inspect-only** API: the returned [`SimulatedTx`] holds no
+    /// commit closure and imposes no `'static` bound, so the closure may
+    /// borrow freely and `T` need not be `'static`. The closure runs exactly
+    /// once and no state changes are committed.
     ///
     /// Auth is globally bypassed only for the duration of the dry-run call.
     /// After `simulate` returns the auth mock is cleared, so subsequent
     /// operations require explicit auth setup and will not silently pass.
+    ///
+    /// Use [`prepare`](Self::prepare) instead when you need to commit the call
+    /// after inspecting the estimate.
+    ///
+    /// ```ignore
+    /// // Look at the cost of a transfer without applying it.
+    /// let sim = env.simulate(|| client.transfer(&from, &to, &100));
+    /// assert!(sim.would_succeed());
+    /// ```
     pub fn simulate<F, T>(&self, f: F) -> SimulatedTx<T>
     where
-        F: Fn() -> T + 'static,
-        T: 'static,
+        F: FnOnce() -> T,
+    {
+        self.dry_run(f)
+    }
+
+    /// Run a contract call's dry-run and return a **commit-capable**
+    /// [`PreparedTx`] that can later apply the call's state changes.
+    ///
+    /// The closure runs once here to produce the estimate (with auth mocked for
+    /// that run only, then cleared) and is retained so it can run again when
+    /// [`PreparedTx::commit`] is called. Because the closure is stored by
+    /// generic type rather than boxed, there is no `'static` requirement.
+    ///
+    /// Use [`simulate`](Self::simulate) instead when you only need to inspect
+    /// the call and will never commit it.
+    ///
+    /// ```ignore
+    /// // Inspect, then commit only if the estimate is acceptable.
+    /// let prepared = env.prepare(|| client.transfer(&from, &to, &100));
+    /// if prepared.would_succeed() {
+    ///     prepared.commit();
+    /// }
+    /// ```
+    pub fn prepare<F, T>(&self, f: F) -> PreparedTx<F, T>
+    where
+        F: Fn() -> T,
+    {
+        let simulation = self.dry_run(|| f());
+        PreparedTx::new(simulation, f)
+    }
+
+    /// Execute `f` once under mocked auth and capture the dry-run metrics.
+    ///
+    /// Shared by [`simulate`](Self::simulate) and [`prepare`](Self::prepare).
+    /// The global auth bypass is cleared before returning so it does not leak
+    /// into later operations.
+    fn dry_run<F, T>(&self, f: F) -> SimulatedTx<T>
+    where
+        F: FnOnce() -> T,
     {
         let mut budget = self.inner.budget();
         budget.reset_default();
@@ -528,13 +611,38 @@ impl MockEnv {
         // Clear the global auth bypass so it does not leak into later operations.
         self.inner.mock_auths(&[]);
 
-        SimulatedTx::new(
+        SimulatedTx::new(fee, instructions, auths, true, Some(result))
+    }
+
+    /// Inspect a contract call without the ability to commit.
+    ///
+    /// Unlike `simulate`, this method does not require the closure to be `'static`,
+    /// allowing it to borrow local clients, accounts, or fixture references.
+    ///
+    /// Auth is globally bypassed only for the duration of the dry-run call.
+    /// After `simulate_inspect` returns the auth mock is cleared, so subsequent
+    /// operations require explicit auth setup and will not silently pass.
+    pub fn simulate_inspect<F, T>(&self, f: F) -> InspectedTx<T>
+    where
+        F: FnOnce() -> T,
+    {
+        let mut budget = self.inner.budget();
+        budget.reset_default();
+
+        self.inner.mock_all_auths();
+        let result = f();
+        let instructions = budget.cpu_instruction_cost();
+        let fee = self.inner.cost_estimate().fee().total;
+        let auths = self.inner.auths().iter().map(|(a, _)| a.clone()).collect();
+        // Clear the global auth bypass so it does not leak into later operations.
+        self.inner.mock_auths(&[]);
+
+        InspectedTx::new(
             fee,
             instructions,
             auths,
             true,
             Some(result),
-            Some(Box::new(f)),
         )
     }
 }
@@ -574,8 +682,13 @@ impl std::fmt::Debug for MockEnv {
             )
             .field("track_costs", &self.track_costs)
             .finish_non_exhaustive()
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // Ensure MockEnv does NOT implement Send or Sync.
+    static_assertions::assert_not_impl_any!(MockEnv: Send, Sync);
 }
+
 
 /// Builder for constructing a `MockEnv` with custom configuration.
 pub struct MockEnvBuilder {

@@ -22,4 +22,4 @@ jobs:
 
       - name: Verify backend
         run: |
-          echo "Backend files verified and minimal backend check passed successfully!"
+          cargo check -p backend

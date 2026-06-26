@@ -56,15 +56,25 @@ impl CostReport {
     pub fn report(&self) -> String {
         let instructions_str = format_with_commas(self.instructions);
         let memory_str = format_with_commas(self.memory);
-        let fee_str = format!("{} str", self.fee_stroops());
+
+        let source_suffix = if self.uses_sdk_fee_estimate() {
+            " (SDK)"
+        } else {
+            ""
+        };
+        let fee_str = format!("{} str{}", self.fee_stroops(), source_suffix);
+
         let mut output = String::new();
-        output.push_str("+---------------------+-----------+\n");
-        output.push_str("| Metric              | Value     |\n");
-        output.push_str("+---------------------+-----------+\n");
-        output.push_str(&format!("| Instructions        | {:>9} |\n", instructions_str));
-        output.push_str(&format!("| Memory (bytes)      | {:>9} |\n", memory_str));
-        output.push_str(&format!("| Estimated fee       | {:>9} |\n", fee_str));
-        output.push_str("+---------------------+-----------+");
+        output.push_str("+---------------------+---------------------+\n");
+        output.push_str("| Metric              | Value               |\n");
+        output.push_str("+---------------------+---------------------+\n");
+        output.push_str(&format!(
+            "| Instructions        | {:>19} |\n",
+            instructions_str
+        ));
+        output.push_str(&format!("| Memory (bytes)      | {:>19} |\n", memory_str));
+        output.push_str(&format!("| Estimated fee       | {:>19} |\n", fee_str));
+        output.push_str("+---------------------+---------------------+");
         output
     }
 
@@ -76,7 +86,12 @@ impl CostReport {
     pub fn report_plain(&self) -> String {
         let instructions_str = format_with_commas(self.instructions);
         let memory_str = format_with_commas(self.memory);
-        let fee_str = format!("{} str", self.fee_stroops());
+        let source_suffix = if self.uses_sdk_fee_estimate() {
+            " (SDK)"
+        } else {
+            ""
+        };
+        let fee_str = format!("{} str{}", self.fee_stroops(), source_suffix);
 
         format!(
             "Metric | Value\n\
@@ -127,8 +142,7 @@ impl CostReport {
         use std::fs;
         use std::path::PathBuf;
 
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-            .unwrap_or_else(|_| ".".to_string());
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
         let snap_dir = PathBuf::from(&manifest_dir)
             .join("test_snapshots")
             .join("cost");
@@ -138,7 +152,18 @@ impl CostReport {
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
 
-        if !snap_path.exists() || update {
+        if !snap_path.exists() {
+            if !update {
+                panic!(
+                    "missing cost snapshot '{}' at {}\n\
+                     Run with CRUCIBLE_UPDATE_SNAPSHOTS=1 to create it.",
+                    name,
+                    snap_path.display()
+                );
+            }
+        }
+
+        if update {
             fs::create_dir_all(&snap_dir)
                 .unwrap_or_else(|e| panic!("failed to create snapshot dir: {}", e));
 
@@ -153,11 +178,7 @@ impl CostReport {
             fs::write(&snap_path, json)
                 .unwrap_or_else(|e| panic!("failed to write snapshot: {}", e));
 
-            if update {
-                eprintln!("[crucible] updated snapshot '{}'", name);
-            } else {
-                eprintln!("[crucible] wrote new snapshot '{}'", name);
-            }
+            eprintln!("[crucible] updated snapshot '{}'", name);
             return;
         }
 
@@ -167,8 +188,20 @@ impl CostReport {
         let saved: CostSnapshot = serde_json::from_str(&contents)
             .unwrap_or_else(|e| panic!("failed to parse snapshot '{}': {}", name, e));
 
-        check_within_tolerance("instructions", saved.instructions, self.instructions, tolerance, name);
-        check_within_tolerance("memory_bytes", saved.memory_bytes, self.memory, tolerance, name);
+        check_within_tolerance(
+            "instructions",
+            saved.instructions,
+            self.instructions,
+            tolerance,
+            name,
+        );
+        check_within_tolerance(
+            "memory_bytes",
+            saved.memory_bytes,
+            self.memory,
+            tolerance,
+            name,
+        );
     }
 }
 

@@ -1,4 +1,3 @@
-#![allow(deprecated)]
 //! Mock token contract for testing Soroban contracts.
 //!
 //! Provides `MockToken` - a wrapper around the Stellar Asset Contract (SAC)
@@ -328,7 +327,7 @@ impl MockToken {
         let client = TokenClient::new(&self.env, &self.address);
         client.transfer(from, to, &amount);
     }
-    
+
     /// Transfers tokens from one account to another using an allowance (spender flow).
     ///
     /// # Arguments
