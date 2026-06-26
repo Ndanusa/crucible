@@ -108,6 +108,7 @@ impl Stroops {
     }
 }
 
+/// **Thread‑safety:** `MockEnv` is deliberately single‑threaded; it uses `Rc`/`RefCell` and does **not** implement `Send` or `Sync`. This ensures deterministic behavior in tests but means fixtures cannot be moved across async tasks.
 /// A wrapper around the Soroban test environment with additional helpers.
 #[derive(Clone)]
 pub struct MockEnv {
@@ -464,8 +465,13 @@ impl std::fmt::Debug for MockEnv {
             )
             .field("track_costs", &self.track_costs)
             .finish_non_exhaustive()
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // Ensure MockEnv does NOT implement Send or Sync.
+    static_assertions::assert_not_impl_any!(MockEnv: Send, Sync);
 }
+
 
 /// Builder for constructing a `MockEnv` with custom configuration.
 pub struct MockEnvBuilder {
