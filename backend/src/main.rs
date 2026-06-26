@@ -12,9 +12,7 @@ use backend::api::handlers::dashboard::get_dashboard;
 use backend::api::handlers::ws::ws_dashboard_handler;
 
 use backend::{
-    api::handlers::{
-        admin, contracts, coverage, dashboard, errors, profiling, sandbox, stellar,
-    },
+    api::handlers::{contracts, dashboard, errors, profiling, sandbox, stellar},
     api::middleware::logging::logging_middleware,
     app_state::{build_application_states, ApplicationStates, SharedServices},
     config::{
@@ -211,19 +209,29 @@ fn build_router(
         tags(
             (name = "profiling", description = "Performance and health monitoring endpoints"),
             (name = "dashboard", description = "Dashboard metrics and analytics endpoints")
-        ),
+        )
     )]
+    struct ApiDoc;
 
-    // --- Admin (privileged) ---
-    // Guarded by admin authentication + authorization.
-    let admin_router = Router::new()
-        .route("/system-stats", get(admin::get_system_stats))
-        .route("/maintenance", post(admin::set_maintenance_mode))
-        .route("/logs", get(admin::get_admin_logs))
-        .route_layer(middleware::from_fn_with_state(
-            admin_auth,
-            require_admin_auth,
-        ))
+    let contracts_router = Router::new()
+        .route("/compile", post(contracts::compile_contract))
+        .route(
+            "/analyze-dependencies",
+            post(contracts::analyze_dependencies),
+        )
+        .route(
+            "/compliance-check",
+            post(contracts::check_compliance),
+        )
+        .route(
+            "/logs",
+            post(contracts::log_contract_call).get(contracts::get_contract_logs),
+        )
+        .route(
+            "/upgrade-plan",
+            post(contracts::create_upgrade_plan),
+        )
+        .route("/templates", get(contracts::get_templates))
         .with_state(profiling_state.clone());
 
     // --- Coverage ---
@@ -266,9 +274,13 @@ fn build_router(
         .nest("/api/v1/dashboard", dashboard_router)
         .nest("/api/v1/audit", audit::routes(audit_service))
         .nest("/api/v1/contracts", contracts_router)
-        // Networks is a single endpoint; registered directly (one definition).
         .route("/api/v1/networks", get(contracts::get_networks))
         .nest("/api/v1/admin", admin_router)
+        .nest(
+            "/api/v1/errors",
+            errors::error_analytics_routes(db_pool.clone(), redis_client.clone()),
+        )
+        .nest("/api/v1/sandbox", sandbox::routes(sandbox_service))
         .nest(
             "/api/v1/errors",
             errors::error_analytics_routes(db_pool.clone(), redis_client.clone()),
