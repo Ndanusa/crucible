@@ -298,6 +298,26 @@ if sim.would_succeed() {
 
 This is particularly valuable in CI when you want to catch unexpectedly expensive code paths or missing authorization requirements, without writing a separate integration test for each scenario.
 
+#### Inspect-Only Simulations
+
+When you only need to inspect the results without committing, use `simulate_inspect`. This method does not require the closure to be `'static`, allowing you to borrow local clients, accounts, or fixture references:
+
+```rust
+// Borrow a local client - no 'static requirement
+let client = MyContractClient::new(&env, &contract_id);
+let alice = env.account("alice");
+
+let inspected = env.simulate_inspect(|| {
+    client.transfer(&alice.address(), &amount)
+});
+
+// Inspect the results
+println!("Fee: {} stroops", inspected.fee());
+println!("Would succeed: {}", inspected.would_succeed());
+```
+
+This is particularly useful in test fixtures where you want to simulate calls using borrowed references without cloning or `'static` workarounds.
+
 ---
 
 ### Event Assertions

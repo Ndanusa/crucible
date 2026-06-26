@@ -5,7 +5,7 @@
 
 use crate::account::AccountHandle;
 use crate::cost::CostReport;
-use crate::sim::SimulatedTx;
+use crate::sim::{InspectedTx, SimulatedTx};
 use soroban_sdk::{
     testutils::{ContractEvents, Events, Ledger},
     Address, Env, FromVal, IntoVal, Val, Vec as SorobanVec,
@@ -425,6 +425,38 @@ impl MockEnv {
             true,
             Some(result),
             Some(Box::new(f)),
+        )
+    }
+
+    /// Inspect a contract call without the ability to commit.
+    ///
+    /// Unlike `simulate`, this method does not require the closure to be `'static`,
+    /// allowing it to borrow local clients, accounts, or fixture references.
+    ///
+    /// Auth is globally bypassed only for the duration of the dry-run call.
+    /// After `simulate_inspect` returns the auth mock is cleared, so subsequent
+    /// operations require explicit auth setup and will not silently pass.
+    pub fn simulate_inspect<F, T>(&self, f: F) -> InspectedTx<T>
+    where
+        F: FnOnce() -> T,
+    {
+        let mut budget = self.inner.budget();
+        budget.reset_default();
+
+        self.inner.mock_all_auths();
+        let result = f();
+        let instructions = budget.cpu_instruction_cost();
+        let fee = self.inner.cost_estimate().fee().total;
+        let auths = self.inner.auths().iter().map(|(a, _)| a.clone()).collect();
+        // Clear the global auth bypass so it does not leak into later operations.
+        self.inner.mock_auths(&[]);
+
+        InspectedTx::new(
+            fee,
+            instructions,
+            auths,
+            true,
+            Some(result),
         )
     }
 }
