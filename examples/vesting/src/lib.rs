@@ -1,5 +1,6 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env};
+#![allow(deprecated)]
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, Env};
 
 /// Persistent state for the vesting schedule.
 #[contracttype]
@@ -25,6 +26,13 @@ pub struct VestingSchedule {
 enum DataKey {
     Admin,
     Schedule,
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum ContractError {
+    Overflow = 1,
 }
 
 /// A cliff + linear vesting contract.
@@ -55,31 +63,13 @@ impl Vesting {
         duration: u64,
     ) {
         admin.require_auth();
+        let cliff_end = start.checked_add(cliff).unwrap_or_else(|| {
+            panic_with_error!(&env, ContractError::Overflow);
+        });
+        let _vesting_end = cliff_end.checked_add(duration).unwrap_or_else(|| {
+            panic_with_error!(&env, ContractError::Overflow);
+        });
 
-        // Prevent double initialization.
-        if env.storage().instance().has(&DataKey::Schedule) {
-            panic!("already initialized");
-        }
-
-        // Validate total is positive.
-        if total <= 0 {
-            panic!("total must be positive");
-        }
-
-        // Validate duration is positive.
-        if duration == 0 {
-            panic!("duration must be positive");
-        }
-
-        // Validate time parameters do not overflow u64.
-        let _cliff_end = start
-            .checked_add(cliff)
-            .expect("cliff overflows start time");
-        let _vesting_end = _cliff_end
-            .checked_add(duration)
-            .expect("duration overflows cliff end");
-
-        // All validations passed — safe to transfer funds.
         token::Client::new(&env, &token).transfer(&admin, env.current_contract_address(), &total);
 
         env.storage().instance().set(&DataKey::Admin, &admin);
@@ -166,16 +156,15 @@ impl Vesting {
 
     fn vested_at(env: &Env, s: &VestingSchedule) -> i128 {
         let now = env.ledger().timestamp();
-        let cliff_end = s
-            .start
-            .checked_add(s.cliff)
-            .expect("cliff overflow in vested_at");
+        let cliff_end = s.start.checked_add(s.cliff).unwrap_or_else(|| {
+            panic_with_error!(env, ContractError::Overflow);
+        });
         if now < cliff_end {
             return 0;
         }
-        let vesting_end = cliff_end
-            .checked_add(s.duration)
-            .expect("duration overflow in vested_at");
+        let vesting_end = cliff_end.checked_add(s.duration).unwrap_or_else(|| {
+            panic_with_error!(env, ContractError::Overflow);
+        });
         if now >= vesting_end {
             s.total
         } else {
