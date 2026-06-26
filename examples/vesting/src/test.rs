@@ -28,7 +28,8 @@ struct Ctx {
 }
 
 impl Ctx {
-    fn setup() -> Self {
+    /// Build the environment and deploy the contract *without* initializing it.
+    fn build() -> Self {
         let env = MockEnv::builder()
             .at_timestamp(BASE_TIME)
             .with_contract::<Vesting>()
@@ -43,20 +44,6 @@ impl Ctx {
         let token = MockToken::new(&env, "VEST", 7);
         token.mint(&admin, TOTAL);
 
-        // Initialize the vesting schedule. mock_all_auths() is needed for:
-        //   - admin.require_auth() inside initialize()
-        //   - token.transfer(admin, contract, total) inside initialize()
-        env.mock_all_auths();
-        VestingClient::new(env.inner(), &id).initialize(
-            &admin,
-            &beneficiary,
-            &token.address(),
-            &TOTAL,
-            &BASE_TIME,
-            &Duration::days(CLIFF_DAYS).as_seconds(),
-            &Duration::days(VEST_DAYS).as_seconds(),
-        );
-
         Ctx {
             env,
             id,
@@ -66,13 +53,31 @@ impl Ctx {
         }
     }
 
+    /// Full happy-path setup: build + initialize.
+    fn setup() -> Self {
+        let ctx = Self::build();
+
+        ctx.env.mock_all_auths();
+        VestingClient::new(ctx.env.inner(), &ctx.id).initialize(
+            &ctx.admin,
+            &ctx.beneficiary,
+            &ctx.token.address(),
+            &TOTAL,
+            &BASE_TIME,
+            &Duration::days(CLIFF_DAYS).as_seconds(),
+            &Duration::days(VEST_DAYS).as_seconds(),
+        );
+
+        ctx
+    }
+
     fn client(&self) -> VestingClient<'_> {
         VestingClient::new(self.env.inner(), &self.id)
     }
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// Existing Tests
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -182,4 +187,89 @@ fn test_vested_increases_monotonically_with_time() {
     assert_eq!(v1, 0); // cliff boundary
     assert!(v2 > v1);
     assert_eq!(v3, TOTAL);
+}
+
+// ---------------------------------------------------------------------------
+// New Tests — Invalid Initialization Parameters
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_double_initialize_reverts() {
+    let ctx = Ctx::setup();
+    // Attempting to initialize again should panic before any transfer.
+    ctx.env.mock_all_auths();
+    assert_reverts!(
+        ctx.client().initialize(
+            &ctx.admin,
+            &ctx.beneficiary,
+            &ctx.token.address(),
+            &TOTAL,
+            &BASE_TIME,
+            &Duration::days(CLIFF_DAYS).as_seconds(),
+            &Duration::days(VEST_DAYS).as_seconds(),
+        ),
+        "already initialized"
+    );
+}
+
+#[test]
+fn test_zero_total_reverts() {
+    let ctx = Ctx::build();
+    ctx.env.mock_all_auths();
+    assert_reverts!(
+        ctx.client().initialize(
+            &ctx.admin,
+            &ctx.beneficiary,
+            &ctx.token.address(),
+            &0, // invalid total
+            &BASE_TIME,
+            &Duration::days(CLIFF_DAYS).as_seconds(),
+            &Duration::days(VEST_DAYS).as_seconds(),
+        ),
+        "total must be positive"
+    );
+    // No funds should have moved.
+    assert_eq!(ctx.token.balance(&ctx.admin), TOTAL);
+}
+
+#[test]
+fn test_zero_duration_reverts() {
+    let ctx = Ctx::build();
+    ctx.env.mock_all_auths();
+    assert_reverts!(
+        ctx.client().initialize(
+            &ctx.admin,
+            &ctx.beneficiary,
+            &ctx.token.address(),
+            &TOTAL,
+            &BASE_TIME,
+            &Duration::days(CLIFF_DAYS).as_seconds(),
+            &0, // invalid duration
+        ),
+        "duration must be positive"
+    );
+    // No funds should have moved.
+    assert_eq!(ctx.token.balance(&ctx.admin), TOTAL);
+}
+
+#[test]
+fn test_time_overflow_reverts() {
+    let ctx = Ctx::build();
+    ctx.env.mock_all_auths();
+    // Choose a cliff that overflows when added to start.
+    let max_u64 = u64::MAX;
+    assert_reverts!(
+        ctx.client().initialize(
+            &ctx.admin,
+            &ctx.beneficiary,
+            &ctx.token.address(),
+            &TOTAL,
+            &max_u64, // start at max
+            &1,       // cliff = 1 → start + cliff overflows
+            &Duration::days(VEST_DAYS).as_seconds(),
+        ),
+        "cliff overflows start time"
+    );
+    // No funds should have moved.
+    assert_eq!(ctx.token.balance(&ctx.admin), TOTAL);
 }

@@ -24,3 +24,5 @@ edition = "2021"
 [workspace.dependencies]
 soroban-sdk = { version = "26", features = ["testutils"] }
 crucible-macros = { path = "crucible-macros" }
+[dev-dependencies]
+static_assertions = "*"

@@ -1137,6 +1137,8 @@ name = "crucible"
 version = "0.1.0"
 dependencies = [
  "crucible-macros",
+ "serde",
+ "serde_json",
  "soroban-sdk",
 ]
 
