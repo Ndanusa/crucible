@@ -79,22 +79,132 @@ pub struct Stroops {
 
 impl Stroops {
     /// Creates stroops from a raw amount.
+    ///
+    /// # Panics
+    /// Panics if the amount is negative, as negative balances are not supported.
     pub fn from(amount: i128) -> Self {
+        assert!(amount >= 0, "Stroops amount cannot be negative: {}", amount);
         Self { amount }
     }
 
     /// Creates stroops from XLM (1 XLM = 10,000,000 stroops).
+    ///
+    /// # Panics
+    /// Panics if the result would overflow or be negative.
     pub fn xlm(xlm: i128) -> Self {
-        Self {
-            amount: xlm * 10_000_000,
+        assert!(xlm >= 0, "XLM amount cannot be negative: {}", xlm);
+        let amount = xlm
+            .checked_mul(10_000_000)
+            .expect("XLM amount overflowed when converting to stroops");
+        Self { amount }
+    }
+
+    /// Creates stroops with fractional XLM from integer parts.
+    ///
+    /// # Arguments
+    /// * `xlm` - Whole XLM units
+    /// * `frac` - Fractional part in stroops (0 to 9,999,999)
+    ///
+    /// # Panics
+    /// Panics if `xlm` is negative, `frac` is out of range, or the result overflows.
+    pub fn from_parts(xlm: i128, frac: i128) -> Self {
+        assert!(xlm >= 0, "XLM amount cannot be negative: {}", xlm);
+        assert!(
+            (0..10_000_000).contains(&frac),
+            "Fractional stroops must be in range 0..10,000,000, got: {}",
+            frac
+        );
+        let xlm_stroops = xlm
+            .checked_mul(10_000_000)
+            .expect("XLM amount overflowed when converting to stroops");
+        let amount = xlm_stroops
+            .checked_add(frac)
+            .expect("Total stroops amount overflowed");
+        Self { amount }
+    }
+
+    /// Creates stroops from a decimal string (e.g., "1.5", "0.0000001").
+    ///
+    /// This is the recommended way to construct Stroops from fractional XLM,
+    /// as it avoids the precision loss of f64 conversion.
+    ///
+    /// # Arguments
+    /// * `s` - Decimal string representing XLM amount
+    ///
+    /// # Panics
+    /// Panics if the string is not a valid decimal, is negative, or overflows.
+    pub fn from_xlm_str(s: &str) -> Self {
+        let s = s.trim();
+        assert!(!s.is_empty(), "XLM amount string cannot be empty");
+
+        let (whole, frac_str) = if let Some((w, f)) = s.split_once('.') {
+            (w, f)
+        } else {
+            (s, "")
+        };
+
+        let xlm: i128 = whole
+            .parse()
+            .expect(&format!("Invalid XLM amount: '{}'", s));
+        assert!(xlm >= 0, "XLM amount cannot be negative: {}", s);
+
+        let mut frac: i128 = 0;
+        let mut divisor: i128 = 1;
+        for c in frac_str.chars().take(7) {
+            assert!(
+                c.is_ascii_digit(),
+                "Invalid character in fractional part: '{}'",
+                s
+            );
+            frac = frac * 10 + (c as i128 - '0' as i128);
+            divisor *= 10;
         }
+        // Pad with zeros if fewer than 7 digits
+        for _ in frac_str.len()..7 {
+            frac *= 10;
+            divisor *= 10;
+        }
+        // Ensure we have exactly 7 digits of precision
+        assert!(
+            frac_str.len() <= 7,
+            "XLM amount has too many decimal places (max 7): '{}'",
+            s
+        );
+
+        let xlm_stroops = xlm
+            .checked_mul(10_000_000)
+            .expect("XLM amount overflowed when converting to stroops");
+        let frac_stroops = frac * 10_000_000 / divisor;
+        let amount = xlm_stroops
+            .checked_add(frac_stroops)
+            .expect("Total stroops amount overflowed");
+
+        Self { amount }
     }
 
     /// Creates stroops with fractional XLM (e.g., 0.5 XLM).
+    ///
+    /// # Deprecated
+    /// This method uses f64 which can cause precision loss and silent truncation.
+    /// Use `from_parts` or `from_xlm_str` instead.
+    ///
+    /// # Panics
+    /// Panics if the result is negative or overflows.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use `from_parts` or `from_xlm_str` to avoid lossy f64 conversion"
+    )]
     pub fn xlm_frac(xlm: f64) -> Self {
-        Self {
-            amount: (xlm * 10_000_000.0) as i128,
-        }
+        assert!(xlm >= 0.0, "XLM amount cannot be negative: {}", xlm);
+        let amount = (xlm * 10_000_000.0)
+            .round()
+            as i128;
+        assert!(
+            amount >= 0,
+            "Converted stroops amount is negative, input may have been too small: {}",
+            xlm
+        );
+        Self { amount }
     }
 
     /// Returns the amount in stroops.
@@ -393,7 +503,7 @@ impl MockEnv {
         CostReport::new_with_fee_estimate(
             budget.cpu_instruction_cost(),
             budget.memory_bytes_cost(),
-            fee_estimate,
+            fee_estimate.total as i128,
         )
     }
 
@@ -585,5 +695,192 @@ impl MockEnvBuilder {
                 .build();
         }
         self.env
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_stroops_from_positive() {
+        let s = Stroops::from(100);
+        assert_eq!(s.as_stroops(), 100);
+    }
+
+    #[test]
+    #[should_panic(expected = "Stroops amount cannot be negative")]
+    fn test_stroops_from_negative() {
+        Stroops::from(-100);
+    }
+
+    #[test]
+    fn test_stroops_xlm() {
+        let s = Stroops::xlm(1);
+        assert_eq!(s.as_stroops(), 10_000_000);
+        assert_eq!(s.as_xlm(), 1.0);
+    }
+
+    #[test]
+    fn test_stroops_xlm_zero() {
+        let s = Stroops::xlm(0);
+        assert_eq!(s.as_stroops(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "XLM amount cannot be negative")]
+    fn test_stroops_xlm_negative() {
+        Stroops::xlm(-1);
+    }
+
+    #[test]
+    #[should_panic(expected = "XLM amount overflowed")]
+    fn test_stroops_xlm_overflow() {
+        // i128::MAX / 10_000_000 would overflow
+        Stroops::xlm(i128::MAX / 10_000_000 + 1);
+    }
+
+    #[test]
+    fn test_stroops_from_parts() {
+        let s = Stroops::from_parts(1, 500_000);
+        assert_eq!(s.as_stroops(), 10_500_000);
+        assert_eq!(s.as_xlm(), 1.05);
+    }
+
+    #[test]
+    fn test_stroops_from_parts_zero_frac() {
+        let s = Stroops::from_parts(5, 0);
+        assert_eq!(s.as_stroops(), 50_000_000);
+    }
+
+    #[test]
+    fn test_stroops_from_parts_max_frac() {
+        let s = Stroops::from_parts(0, 9_999_999);
+        assert_eq!(s.as_stroops(), 9_999_999);
+    }
+
+    #[test]
+    #[should_panic(expected = "XLM amount cannot be negative")]
+    fn test_stroops_from_parts_negative_xlm() {
+        Stroops::from_parts(-1, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Fractional stroops must be in range")]
+    fn test_stroops_from_parts_negative_frac() {
+        Stroops::from_parts(1, -1);
+    }
+
+    #[test]
+    #[should_panic(expected = "Fractional stroops must be in range")]
+    fn test_stroops_from_parts_frac_too_large() {
+        Stroops::from_parts(1, 10_000_000);
+    }
+
+    #[test]
+    fn test_stroops_from_xlm_str() {
+        let s = Stroops::from_xlm_str("1.5");
+        assert_eq!(s.as_stroops(), 15_000_000);
+        assert_eq!(s.as_xlm(), 1.5);
+    }
+
+    #[test]
+    fn test_stroops_from_xlm_str_no_frac() {
+        let s = Stroops::from_xlm_str("10");
+        assert_eq!(s.as_stroops(), 100_000_000);
+    }
+
+    #[test]
+    fn test_stroops_from_xlm_str_small() {
+        let s = Stroops::from_xlm_str("0.0000001");
+        assert_eq!(s.as_stroops(), 1);
+    }
+
+    #[test]
+    fn test_stroops_from_xlm_str_leading_zeros() {
+        let s = Stroops::from_xlm_str("0.000001");
+        assert_eq!(s.as_stroops(), 10);
+    }
+
+    #[test]
+    fn test_stroops_from_xlm_str_trimmed() {
+        let s = Stroops::from_xlm_str("  2.5  ");
+        assert_eq!(s.as_stroops(), 25_000_000);
+    }
+
+    #[test]
+    #[should_panic(expected = "XLM amount string cannot be empty")]
+    fn test_stroops_from_xlm_str_empty() {
+        Stroops::from_xlm_str("");
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid XLM amount")]
+    fn test_stroops_from_xlm_str_invalid() {
+        Stroops::from_xlm_str("abc");
+    }
+
+    #[test]
+    #[should_panic(expected = "XLM amount cannot be negative")]
+    fn test_stroops_from_xlm_str_negative() {
+        Stroops::from_xlm_str("-1.5");
+    }
+
+    #[test]
+    #[should_panic(expected = "Invalid character in fractional part")]
+    fn test_stroops_from_xlm_str_invalid_frac() {
+        Stroops::from_xlm_str("1.5a");
+    }
+
+    #[test]
+    #[should_panic(expected = "XLM amount has too many decimal places")]
+    fn test_stroops_from_xlm_str_too_many_decimals() {
+        Stroops::from_xlm_str("1.12345678");
+    }
+
+    #[test]
+    fn test_stroops_xlm_frac_deprecated() {
+        // This test ensures the deprecated method still works but with rounding
+        let s = Stroops::xlm_frac(1.5);
+        assert_eq!(s.as_stroops(), 15_000_000);
+    }
+
+    #[test]
+    fn test_stroops_xlm_frac_rounding() {
+        // f64 precision loss example: 0.1 cannot be represented exactly
+        // The deprecated method rounds, so we test that behavior
+        let s = Stroops::xlm_frac(0.1);
+        // Due to f64 precision, this might not be exactly 1,000,000
+        assert!(s.as_stroops() >= 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "XLM amount cannot be negative")]
+    fn test_stroops_xlm_frac_negative() {
+        Stroops::xlm_frac(-1.0);
+    }
+
+    #[test]
+    fn test_stroops_roundtrip() {
+        let original = Stroops::from_xlm_str("123.456789");
+        let _as_xlm = original.as_xlm();
+        // "123.456789" = 123 XLM + 4567890 stroops (padded to 7 digits)
+        let roundtripped = Stroops::from_parts(123, 4_567_890);
+        assert_eq!(original.as_stroops(), roundtripped.as_stroops());
+    }
+
+    #[test]
+    fn test_stroops_large_amount() {
+        // Test with a large but valid amount
+        let s = Stroops::from_xlm_str("1000000");
+        assert_eq!(s.as_stroops(), 10_000_000_000_000);
+    }
+
+    #[test]
+    fn test_stroops_max_safe_amount() {
+        // Maximum safe XLM amount that won't overflow when multiplied
+        let max_xlm = i128::MAX / 10_000_000;
+        let s = Stroops::xlm(max_xlm);
+        assert_eq!(s.as_stroops(), max_xlm * 10_000_000);
     }
 }

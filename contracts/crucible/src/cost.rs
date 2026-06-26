@@ -1,13 +1,11 @@
 //! Helpers for measuring and reporting contract execution costs.
 
-use soroban_env_host::FeeEstimate;
-
 /// A report of the compute costs for a contract invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CostReport {
     instructions: u64,
     memory: u64,
-    fee_estimate: Option<FeeEstimate>,
+    fee_stroops: Option<i128>,
 }
 
 impl CostReport {
@@ -16,7 +14,7 @@ impl CostReport {
         Self {
             instructions,
             memory,
-            fee_estimate: None,
+            fee_stroops: None,
         }
     }
 
@@ -24,12 +22,12 @@ impl CostReport {
     pub fn new_with_fee_estimate(
         instructions: u64,
         memory: u64,
-        fee_estimate: FeeEstimate,
+        fee_stroops: i128,
     ) -> Self {
         Self {
             instructions,
             memory,
-            fee_estimate: Some(fee_estimate),
+            fee_stroops: Some(fee_stroops),
         }
     }
 
@@ -44,16 +42,14 @@ impl CostReport {
     }
 
     /// Returns the estimated network fee in stroops.
-    pub fn fee_stroops(&self) -> i64 {
-        self.fee_estimate
-            .as_ref()
-            .map(|fee| fee.total)
-            .unwrap_or((self.instructions / 100) as i64)
+    pub fn fee_stroops(&self) -> i128 {
+        self.fee_stroops
+            .unwrap_or_else(|| (self.instructions / 100) as i128)
     }
 
     /// Returns whether the fee estimate comes from the Soroban SDK.
     pub fn uses_sdk_fee_estimate(&self) -> bool {
-        self.fee_estimate.is_some()
+        self.fee_stroops.is_some()
     }
 
     /// Returns a human-readable formatted table report of the costs.
@@ -118,7 +114,7 @@ struct CostSnapshot {
     name: String,
     instructions: u64,
     memory_bytes: u64,
-    fee_stroops: i64,
+    fee_stroops: i128,
 }
 
 #[cfg(feature = "snapshots")]
@@ -193,7 +189,6 @@ fn check_within_tolerance(metric: &str, saved: u64, current: u64, tolerance: f64
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_env_host::FeeEstimate;
 
     #[test]
     fn test_cost_report_creation() {
@@ -210,21 +205,10 @@ mod tests {
 
     #[test]
     fn test_fee_stroops_uses_sdk_fee_estimate_when_available() {
-        let sdk_fee = FeeEstimate {
-            total: 42,
-            instructions: 10,
-            disk_read_entries: 0,
-            write_entries: 0,
-            disk_read_bytes: 0,
-            write_bytes: 0,
-            contract_events: 0,
-            persistent_entry_rent: 0,
-            temporary_entry_rent: 0,
-        };
-        let report = CostReport::new_with_fee_estimate(10_000, 0, sdk_fee.clone());
+        let report = CostReport::new_with_fee_estimate(10_000, 0, 42);
         assert!(report.uses_sdk_fee_estimate());
         assert_eq!(report.fee_stroops(), 42);
-        assert_eq!(report.report().contains("SDK"), true);
+        assert_eq!(report.report().contains("42 str"), true);
     }
 
     #[test]
