@@ -8,9 +8,13 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use backend::api::handlers::dashboard::get_dashboard;
+use backend::api::handlers::ws::ws_dashboard_handler;
+
 use backend::{
-    api::handlers::{admin, contracts, coverage, dashboard, errors, profiling, sandbox, stellar, ws},
-    api::middleware::auth::{require_admin_auth, AdminAuthState},
+    api::handlers::{
+        admin, contracts, coverage, dashboard, errors, profiling, sandbox, stellar,
+    },
     api::middleware::logging::logging_middleware,
     app_state::{build_application_states, ApplicationStates, SharedServices},
     config::{
@@ -184,63 +188,31 @@ fn build_router(
         coverage: coverage_state,
         websocket: ws_state,
         audit: audit_service,
-    } = states;
+    } = build_application_states(db_pool.clone(), redis_client.clone(), &shared_services);
 
-    // --- Config management (privileged) ---
-    // Guarded by admin authentication + authorization.
-    let config_router = Router::new()
-        .route("/api/config", get(handle_get_config))
-        .route("/api/config/reload", post(handle_reload))
-        .route_layer(middleware::from_fn_with_state(
-            admin_auth.clone(),
-            require_admin_auth,
-        ))
-        .with_state(config_manager);
-
-    // --- Profiling & system status ---
-    let profiling_router = Router::new()
-        .route("/metrics", get(profiling::get_metrics))
-        .route("/health", get(profiling::get_health))
-        .route("/prometheus", get(profiling::get_prometheus_metrics))
-        .route("/status", get(profiling::get_system_status))
-        .route("/profile", post(profiling::trigger_profile_collection))
-        .route(
-            "/contracts/benchmark",
-            post(profiling::run_contract_benchmark),
-        )
-        .with_state(profiling_state.clone());
-
-    // Legacy profiling aliases kept for backward compatibility.
-    let legacy_profiling_router = Router::new()
-        .route("/api/status", get(profiling::get_system_status))
-        .route("/api/profile", post(profiling::trigger_profile_collection))
-        .with_state(profiling_state.clone());
-
-    // --- Dashboard ---
-    let dashboard_router = Router::new()
-        .route("/", get(dashboard::get_dashboard))
-        .route("/metrics", get(dashboard::get_dashboard_metrics))
-        .route(
-            "/contracts/:contract_id/stats",
-            get(dashboard::get_contract_stats),
-        )
-        .with_state(dashboard_state.clone());
-
-    // --- Contracts ---
-    let contracts_router = Router::new()
-        .route("/compile", post(contracts::compile_contract))
-        .route(
-            "/analyze-dependencies",
-            post(contracts::analyze_dependencies),
-        )
-        .route("/compliance-check", post(contracts::check_compliance))
-        .route(
-            "/logs",
-            post(contracts::log_contract_call).get(contracts::get_contract_logs),
-        )
-        .route("/upgrade-plan", post(contracts::create_upgrade_plan))
-        .route("/templates", get(contracts::get_templates))
-        .with_state(profiling_state.clone());
+    #[derive(OpenApi)]
+    #[openapi(
+        paths(
+            profiling::get_metrics,
+            profiling::get_health,
+            dashboard::get_dashboard_metrics,
+            dashboard::get_contract_stats,
+            audit::list_audit_reports,
+            audit::get_audit_report,
+        ),
+        components(schemas(
+            profiling::MetricsReport,
+            profiling::HealthResponse,
+            dashboard::DashboardMetrics,
+            dashboard::ContractStats,
+            audit::AuditEventRecord,
+            audit::AuditEventRequest,
+        )),
+        tags(
+            (name = "profiling", description = "Performance and health monitoring endpoints"),
+            (name = "dashboard", description = "Dashboard metrics and analytics endpoints")
+        ),
+    )]
 
     // --- Admin (privileged) ---
     // Guarded by admin authentication + authorization.
@@ -260,7 +232,32 @@ fn build_router(
         .route("/:project", get(coverage::get_latest_coverage))
         .with_state(coverage_state);
 
-    Router::new()
+    let admin_router = Router::new()
+        .route(
+            "/system-stats",
+            get(admin::get_system_stats),
+        )
+        .route(
+            "/maintenance",
+            post(admin::set_maintenance_mode),
+        )
+        .route("/logs", get(admin::get_admin_logs));
+
+    let contracts_router = Router::new()
+        .route("/compile", post(contracts::compile_contract))
+        .route("/analyze-dependencies", post(contracts::analyze_dependencies))
+        .route("/compliance-check", post(contracts::check_compliance))
+        .route(
+            "/logs",
+            post(contracts::log_contract_call).get(contracts::get_contract_logs),
+        )
+        .route("/upgrade-plan", post(contracts::create_upgrade_plan))
+        .route("/templates", get(contracts::get_templates))
+        .with_state(profiling_state.clone());
+
+    let cors = build_cors_layer(&config);
+
+    let app = Router::new()
         .route("/", get(|| async { "Crucible Backend API" }))
         .route("/.well-known/stellar.toml", get(stellar::get_stellar_toml))
         .merge(config_router)
@@ -274,19 +271,13 @@ fn build_router(
         .nest("/api/v1/admin", admin_router)
         .nest(
             "/api/v1/errors",
-            errors::error_analytics_routes(db_pool, redis_client),
+            errors::error_analytics_routes(db_pool.clone(), redis_client.clone()),
         )
         .nest("/api/v1/sandbox", sandbox::routes(sandbox_service))
         .nest("/api/v1/coverage", coverage_router)
-        .route(
-            "/api/v1/ws/dashboard",
-            get(ws::ws_dashboard_handler).with_state(ws_state),
-        )
-        // Legacy dashboard alias kept for backward compatibility.
-        .route(
-            "/api/dashboard",
-            get(dashboard::get_dashboard).with_state(dashboard_state),
-        )
+        .route("/api/v1/ws/dashboard", get(ws_dashboard_handler).with_state(ws_state))
+        .route("/api/dashboard", get(get_dashboard))
+        .with_state(dashboard_state)
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(middleware::from_fn_with_state(
             profiling_state,
