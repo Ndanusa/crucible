@@ -31,8 +31,7 @@ use backend::{
 };
 use redis::aio::ConnectionManager;
 use redis::Client as RedisClient;
-use std::net::SocketAddr;
-use std::sync::Arc;
+
 use tokio::signal;
 use tower_http::{
     cors::{AllowOrigin, Any, CorsLayer},
