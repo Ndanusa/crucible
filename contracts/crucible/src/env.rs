@@ -150,7 +150,7 @@ impl CapturedEvent {
 
     /// Returns the raw data value.
     pub fn data_raw(&self) -> Val {
-        self.data.clone()
+        self.data
     }
 
     /// Convert the event data into a typed Rust value using Soroban's FromVal.
@@ -388,8 +388,19 @@ impl MockEnv {
 
         let mut budget = self.inner.budget();
         budget.reset_default();
-        let result = f();
-        let fee_estimate = self.inner.cost_estimate().fee();
+        let _result = f();
+        let fee = self.inner.cost_estimate().fee();
+        let fee_estimate = crate::cost::FeeEstimate {
+            total: fee.total,
+            instructions: fee.instructions,
+            disk_read_entries: fee.disk_read_entries,
+            write_entries: fee.write_entries,
+            disk_read_bytes: fee.disk_read_bytes,
+            write_bytes: fee.write_bytes,
+            contract_events: fee.contract_events,
+            persistent_entry_rent: fee.persistent_entry_rent,
+            temporary_entry_rent: fee.temporary_entry_rent,
+        };
         CostReport::new_with_fee_estimate(
             budget.cpu_instruction_cost(),
             budget.memory_bytes_cost(),
