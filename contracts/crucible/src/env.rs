@@ -491,11 +491,7 @@ impl MockEnv {
             if event_topics.len() < filter_topics.len() {
                 continue;
             }
-            let matches = filter_topics.iter().enumerate().all(|(i, filter_topic)| {
-                // Val doesn't implement PartialEq; compare raw bit payloads.
-                let ev_topic = event_topics.get(i as u32).unwrap();
-                filter_topic.get_payload() == ev_topic.get_payload()
-            });
+            let matches = crate::event_topic_match::topics_match(&self.inner, &filter_topics, &event_topics);
             if matches {
                 let sc_addr = ScAddress::Contract(hash.clone());
                 let contract_id = Address::from_val(&self.inner, &sc_addr);
