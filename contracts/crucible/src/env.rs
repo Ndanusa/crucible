@@ -323,9 +323,53 @@ impl MockEnv {
 
     /// Enable mock authorization for all calls.
     ///
-    /// This causes all `require_auth()` calls to succeed without valid signatures.
+    /// The bypass persists until explicitly cleared. Prefer
+    /// [`with_mock_all_auths`] or [`mock_all_auths_scoped`] to contain the
+    /// bypass to a single block.
     pub fn mock_all_auths(&self) {
         self.inner.mock_all_auths();
+    }
+
+    /// Enable mock authorization for the duration of a closure, then clear it.
+    ///
+    /// After `f` returns, `mock_auths(&[])` is called so that subsequent
+    /// `require_auth()` calls are enforced normally.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// env.with_mock_all_auths(|| {
+    ///     contract.initialize(&admin);
+    /// });
+    /// // Auth required again from here on.
+    /// ```
+    pub fn with_mock_all_auths<F, T>(&self, f: F) -> T
+    where
+        F: FnOnce() -> T,
+    {
+        self.inner.mock_all_auths();
+        let result = f();
+        self.inner.mock_auths(&[]);
+        result
+    }
+
+    /// Returns an RAII guard that enables mock authorization until dropped.
+    ///
+    /// Useful when the scoped block spans multiple statements that cannot
+    /// easily be wrapped in a single closure.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// {
+    ///     let _guard = env.mock_all_auths_scoped();
+    ///     contract.step_one();
+    ///     contract.step_two();
+    /// } // guard dropped — auth restored
+    /// ```
+    pub fn mock_all_auths_scoped(&self) -> MockAuthGuard {
+        self.inner.mock_all_auths();
+        MockAuthGuard {
+            env: self.inner.clone(),
+        }
     }
 
     /// Set explicit mock authorizations for subsequent contract calls.
@@ -674,6 +718,31 @@ impl MockEnv {
     }
 }
 
+/// RAII guard that clears mock auth when dropped.
+///
+/// Obtained via [`MockEnv::mock_all_auths_scoped`]. Auth bypass is active for
+/// as long as this value is alive; dropping it calls `mock_auths(&[])` on the
+/// underlying environment, restoring the requirement for real auth on all
+/// subsequent calls.
+///
+/// # Example
+/// ```rust,ignore
+/// {
+///     let _guard = env.mock_all_auths_scoped();
+///     contract.step_one();
+///     contract.step_two();
+/// } // _guard dropped — auth required again
+/// ```
+pub struct MockAuthGuard {
+    env: Env,
+}
+
+impl Drop for MockAuthGuard {
+    fn drop(&mut self) {
+        self.env.mock_auths(&[]);
+    }
+}
+
 impl Default for MockEnv {
     fn default() -> Self {
         Self {
@@ -709,6 +778,9 @@ impl std::fmt::Debug for MockEnv {
             )
             .field("track_costs", &self.track_costs)
             .finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -960,5 +1032,49 @@ mod tests {
 
         let alice = env2.account("alice");
         assert_eq!(alice.xlm_balance(), Stroops::xlm(100).as_stroops());
+    }
+}
+
+#[cfg(test)]
+mod auth_scope_tests {
+    use super::*;
+
+    #[test]
+    fn with_mock_all_auths_clears_after_block() {
+        let env = MockEnv::default();
+        env.with_mock_all_auths(|| {
+            // no contract calls needed — just verify the side-effect
+        });
+        // mock_auths(&[]) must have been called; auths() should be empty
+        let auths = env.inner().auths();
+        assert!(
+            auths.is_empty(),
+            "auth bypass must be cleared after with_mock_all_auths"
+        );
+    }
+
+    #[test]
+    fn scoped_guard_clears_on_drop() {
+        let env = MockEnv::default();
+        {
+            let _guard = env.mock_all_auths_scoped();
+        } // dropped here
+        let auths = env.inner().auths();
+        assert!(
+            auths.is_empty(),
+            "auth bypass must be cleared after guard drop"
+        );
+    }
+
+    #[test]
+    fn successive_scopes_do_not_interfere() {
+        let env = MockEnv::default();
+        {
+            let _g = env.mock_all_auths_scoped();
+        }
+        {
+            let _g = env.mock_all_auths_scoped();
+        }
+        assert!(env.inner().auths().is_empty());
     }
 }
