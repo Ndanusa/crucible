@@ -487,7 +487,7 @@ impl MockEnv {
                 continue;
             }
             let matches =
-                crate::event_topic_match::topics_match_by_payload(&filter_topics, &event_topics);
+                crate::event_topic_match::topics_match(&self.inner, &filter_topics, &event_topics);
             if matches {
                 let sc_addr = ScAddress::Contract(hash.clone());
                 let contract_id = Address::from_val(&self.inner, &sc_addr);
@@ -681,7 +681,7 @@ impl MockEnv {
     /// Auth is globally bypassed only for the duration of the dry-run call.
     /// After `simulate_inspect` returns the auth mock is cleared, so subsequent
     /// operations require explicit auth setup and will not silently pass.
-    pub fn simulate_inspect<F, T>(&self, f: F) -> InspectedTx<T>
+    pub fn simulate_inspect<F, T>(&self, f: F) -> SimulatedTx<T>
     where
         F: FnOnce() -> T,
     {
@@ -697,7 +697,7 @@ impl MockEnv {
         // Clear the global auth bypass so it does not leak into later operations.
         self.inner.mock_auths(&[]);
 
-        InspectedTx::new(
+        SimulatedTx::new(
             fee,
             instructions,
             auths,
@@ -923,7 +923,7 @@ impl MockEnvBuilder {
 }
 
 #[cfg(test)]
-mod tests {
+mod extra_tests {
     use super::*;
     use soroban_sdk::testutils::Address as _;
 

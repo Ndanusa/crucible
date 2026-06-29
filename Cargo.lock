@@ -1141,6 +1141,7 @@ dependencies = [
  "serde_json",
  "soroban-env-host",
  "soroban-sdk",
+ "static_assertions",
 ]
 
 [[package]]
